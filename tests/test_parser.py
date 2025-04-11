@@ -18,8 +18,4 @@ for cmd in commands:
     print(f"\nCommand: {cmd}")
     print("Parsed Output:", parse_command(cmd))
 
-if __name__ == "__main__":
-    user_cmd = input("🗣️ Enter your LinkedIn automation command: ")
-    parsed = parse_command(user_cmd)
-    print("\n📝 Parsed Command:")
-    print(parsed)
+
