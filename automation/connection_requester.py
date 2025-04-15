@@ -253,8 +253,11 @@ def scroll_to_load_more(driver, times=10):
         time.sleep(random.uniform(2, 4))  # Random delay between scrolls
     print("✅ Done scrolling")
 
-# Global set to track processed profiles across multiple runs
-processed_profiles = set()
+# Global sets to track different profile states
+processed_profiles = set()     # Profiles you've already sent requests to
+skipped_profiles = set()       # Profiles you skipped
+saved_for_later = set()        # Profiles you marked to review later
+
 
 def print_profile_info(profile_info):
     """Print profile information in a nicely formatted way"""
@@ -274,7 +277,7 @@ def print_profile_info(profile_info):
 
 def process_connections(driver, max_requests=5):
     """Process connection requests with enhanced user feedback"""
-    global processed_profiles
+    global processed_profiles, skipped_profiles, saved_for_later
     open_people_you_may_know(driver)
     scroll_to_load_more(driver)
 
@@ -330,23 +333,31 @@ def process_connections(driver, max_requests=5):
                 # Print profile details
                 print_profile_info(profile_info)
 
-                # Ask for user confirmation
-                decision = input("🤖 Send connection request? [y/n]: ").strip().lower()
-                if decision == "y":
-                    connect_button = get_connect_button(card)
-                    if connect_button:
-                        success = send_connection_request(driver, card, connect_button, None)
-                        if success:
-                            total_requests_sent += 1
-                            processed_profiles.add(name)  # Mark profile as processed
-                            print(f"📊 Progress: {total_requests_sent}/{max_requests} requests sent")
+                while True:
+                    decision = input("🤖 Send request? [y = yes / n = skip / l = save for later]: ").strip().lower()
+
+                    if decision == "y":
+                        connect_button = get_connect_button(card)
+                        if connect_button:
+                            success = send_connection_request(driver, card, connect_button, None)
+                            if success:
+                                total_requests_sent += 1
+                                processed_profiles.add(name)
+                                print(f"📊 Progress: {total_requests_sent}/{max_requests} requests sent")
+                        break
+
+                    elif decision == "n":
+                        skipped_profiles.add(name)
+                        print("⏭️ Skipped.")
+                        break
+
+                    elif decision == "l":
+                        saved_for_later.add(name)
+                        print("📌 Saved for later.")
+                        break
+
                     else:
-                        print("❌ Connect button not found for this profile.")
-                else:
-                    print("⏭️ Skipped.")
-                    driver.execute_script(
-                        "arguments[0].style.border='2px solid gray';", card
-                    )
+                        print("⚠️ Invalid option. Choose [y/n/l]")
 
                 time.sleep(1)
 
