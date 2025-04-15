@@ -20,7 +20,6 @@ logs/
 
 # Configuration files
 config/credentials.json
-config/chrome_config.json
 
 # Python
 __pycache__/
