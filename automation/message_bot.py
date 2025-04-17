@@ -6,6 +6,23 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException
 import unicodedata
+from utils.tone_templates import templates, followup_templates
+from ai.memory_manager import has_messaged_before, record_message
+
+def personalize_message(name, company, tone="professional"):
+    template_set = followup_templates if has_messaged_before(name) else templates
+    template = template_set[tone]
+    return template.format(name=name, company=company or "your organization")
+
+def choose_tone():
+    print("\n🎨 Choose message tone:")
+    print("1. Professional")
+    print("2. Friendly")
+    print("3. Casual")
+    tone_map = {"1": "professional", "2": "friendly", "3": "casual"}
+    choice = input("Enter your choice [1/2/3]: ").strip()
+    return tone_map.get(choice, "professional")
+
 
 def remove_non_bmp_characters(text):
     """Remove non-BMP Unicode characters from the given text."""
@@ -36,7 +53,7 @@ def select_message_target(driver):
     return choice
 
 
-def send_message(driver, thread, message):
+def send_message(driver, thread, name, message):
     try:
         # Open the conversation thread with retries
         for attempt in range(3):
@@ -92,6 +109,7 @@ def send_message(driver, thread, message):
             )
             driver.execute_script("arguments[0].click();", send_button)
             print("✅ Message sent via direct CSS selector.")
+            record_message(name, message)
             send_success = True
         except Exception as e:
             print(f"⚠️ CSS selector method failed: {str(e)}")
@@ -170,14 +188,17 @@ def send_message(driver, thread, message):
 def message_contacts(driver, contacts):
     for name, thread in contacts:
         print("\n👤 Contact:", name)
-        prompt = f"Write a short, friendly follow-up message to {name} on LinkedIn."
-        ai_msg = generate_connection_message(prompt)
+        from automation.message_bot import personalize_message, choose_tone
+        tone = choose_tone()
+        company = "ABC Corp"  # Placeholder, could be extracted later from profile or chat
+        ai_msg = personalize_message(name, company, tone)
+
 
         print("💬 Suggested message:\n", ai_msg)
 
         action = input("🤖 Send this message? [y = yes / e = edit / s = skip]: ").strip().lower()
         if action == "y":
-            send_message(driver, thread, ai_msg)
+            send_message(driver, thread, name, ai_msg)
         elif action == "e":
             custom_msg = input("✍️ Enter your custom message: ").strip()
             send_message(driver, thread, custom_msg)

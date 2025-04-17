@@ -28,13 +28,17 @@ def process_post(driver, post_element, index):
     print(f"\n👀 Post #{index + 1}")
 
     try:
+        # Scroll the post into view
         driver.execute_script("arguments[0].scrollIntoView(true);", post_element)
-        time.sleep(2)
+        time.sleep(2)  # Wait for the post to stabilize
     
         # Try finding action buttons (like/comment)
-        action_buttons = post_element.find_elements(By.XPATH, ".//button[contains(@aria-label, 'Like') or contains(@aria-label, 'Comment')]")
+        action_buttons = post_element.find_elements(
+            By.XPATH, ".//button[contains(@aria-label, 'Like') or contains(@aria-label, 'Comment')]"
+        )
     
         action = input("💬 Action? [like / comment / skip]: ").strip().lower()
+        
         if action == "like":
             for btn in action_buttons:
                 label = btn.get_attribute("aria-label")
@@ -42,22 +46,67 @@ def process_post(driver, post_element, index):
                     btn.click()
                     print("👍 Liked.")
                     break
+        
         elif action == "comment":
             try:
-                comment_button = post_element.find_element(By.XPATH, ".//button[contains(@aria-label, 'Comment')]")
-                comment_button.click()
-                time.sleep(1)
-    
-                textarea = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, "//textarea[contains(@aria-label, 'Add a comment')]"))
-                )
-                textarea.send_keys("Thanks for sharing! 👏")
-                textarea.send_keys(Keys.RETURN)
-                print("💬 Commented.")
+                # Find and click the comment button using multiple locators
+                comment_button = None
+                retries = 3
+                for attempt in range(retries):
+                    try:
+                        comment_button = post_element.find_element(
+                            By.XPATH, 
+                            ".//button[contains(@aria-label, 'Comment') or contains(@data-control-name, 'comment')]"
+                        )
+                        if comment_button:
+                            comment_button.click()
+                            print("💬 Comment button clicked.")
+                            break
+                    except Exception:
+                        print(f"[⚠️] Attempt {attempt + 1} failed to find the comment button.")
+                        time.sleep(1)
+                
+                if not comment_button:
+                    print("[❌] Could not find the comment button after multiple attempts.")
+                    return  # Exit early if the comment button is not found
+
+                # Wait for the rich text editor (comment box) to appear
+                for attempt in range(retries):
+                    try:
+                        # Locate the contenteditable div inside the rich text editor
+                        comment_box = WebDriverWait(driver, 5).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "div.ql-editor[contenteditable='true']"))
+                        )
+                        
+                        # Debug: Print the HTML of the located element
+                        print(f"[🔍] Found comment box: {comment_box.get_attribute('outerHTML')}")
+
+                        # Allow user to input their own comment
+                        custom_comment = input("📝 Enter your comment: ").strip()
+                        if not custom_comment:
+                            custom_comment = "Thanks for sharing! 👏"  # Default fallback
+
+                        # Use JavaScript to set the value of the contenteditable div
+                        driver.execute_script("arguments[0].innerHTML = arguments[1];", comment_box, custom_comment)
+                        print("💬 Comment written.")
+                        
+                        # Locate and click the "Comment" submit button
+                        submit_button = WebDriverWait(driver, 5).until(
+                            EC.element_to_be_clickable((By.XPATH, "//button[contains(@class, 'comments-comment-box__submit-button')]"))
+                        )
+                        submit_button.click()
+                        print("💬 Comment submitted.")
+                        break  # Exit retry loop if successful
+                    except Exception as e:
+                        print(f"[⚠️] Attempt {attempt + 1} failed to interact with the comment box: {e}")
+                        if attempt == retries - 1:
+                            print("[❌] Failed to comment after multiple attempts.")
             except Exception as e:
-                print(f"[⚠️] Couldn't comment: {e}")
+                print(f"[⚠️] Couldn't find or click the comment button: {e}")
+        
         else:
             print("⏭️ Skipped.")
+    
     except Exception as e:
         print(f"[⚠️] Failed on post #{index + 1}: {e}")
 
