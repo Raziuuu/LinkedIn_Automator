@@ -1,7 +1,7 @@
 {
     "chrome_profile": {
         "base_path": "C:\\Users\\maazk\\AppData\\Local\\Google\\Chrome\\User Data",
-        "profile_name": "Profile 4",
+        "profile_name": "Profile 2",
         "description": "This is the Chrome profile used for LinkedIn automation. Update the path to match your system."
     }
 } 

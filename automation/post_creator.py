@@ -277,6 +277,178 @@ def upload_image(driver, image_path):
         print(f"❌ Failed to upload image: {e}")
         driver.save_screenshot("image_upload_error.png")
         return False
+    
+def schedule_post(driver):
+    try:
+        print("📆 Opening scheduling modal...")
+
+        # Click the scheduling (clock) icon next to Post button
+        schedule_selectors = [
+            "//button[contains(@aria-label, 'Schedule')]",
+            "//button[contains(@class, 'schedule-button')]",
+            "//button[.//span[contains(text(), 'Schedule')]]",
+            "//div[contains(@class, 'share-box-footer')]//button[contains(@class, 'schedule')]"
+        ]
+        
+        for selector in schedule_selectors:
+            try:
+                clock_icon = WebDriverWait(driver, 3).until(
+                    EC.element_to_be_clickable((By.XPATH, selector))
+                )
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", clock_icon)
+                time.sleep(1)
+                driver.execute_script("arguments[0].click();", clock_icon)
+                print(f"Clicked schedule button using selector: {selector}")
+                break
+            except:
+                continue
+        else:
+            # If none of the above selectors work, try a JavaScript approach
+            print("Using JavaScript to find and click schedule button...")
+            driver.execute_script("""
+                var buttons = document.querySelectorAll('button');
+                for (var i = 0; i < buttons.length; i++) {
+                    if (buttons[i].textContent.includes('Schedule') || 
+                        buttons[i].getAttribute('aria-label')?.includes('Schedule')) {
+                        buttons[i].click();
+                        return true;
+                    }
+                }
+                return false;
+            """)
+        
+        time.sleep(2)
+
+        # Wait for scheduling modal to appear
+        WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.ID, "share-post__scheduled-date"))
+        )
+        
+        # Get current time and calculate minimum valid time (current + 10 minutes)
+        from datetime import datetime, timedelta
+        current_time = datetime.now()
+        min_valid_time = current_time + timedelta(minutes=15)  # Adding 15 min for safety
+        
+        # Format as string to show user
+        min_time_str = min_valid_time.strftime("%m/%d/%Y %I:%M %p")
+        print(f"NOTE: Schedule time must be at least 10 minutes in the future (after {min_time_str})")
+        
+        # Ask for date and time with validation
+        while True:
+            date_str = input("Enter the date (mm/dd/yyyy): ")
+            time_str = input("Enter the time (e.g., 10:00 AM): ")
+            
+            # Attempt to parse the user's input
+            try:
+                # Try different time formats
+                try:
+                    user_datetime = datetime.strptime(f"{date_str} {time_str}", "%m/%d/%Y %I:%M %p")
+                except:
+                    try:
+                        user_datetime = datetime.strptime(f"{date_str} {time_str}", "%m/%d/%Y %H:%M")
+                    except:
+                        print("❌ Invalid date/time format. Please try again.")
+                        continue
+                
+                # Check if time is at least 10 minutes in the future
+                if user_datetime <= min_valid_time:
+                    print(f"❌ Schedule time must be after {min_time_str}. Please try again.")
+                    continue
+                
+                # Valid time, exit loop
+                break
+            except Exception as e:
+                print(f"❌ Invalid date/time format: {e}. Please try again.")
+        
+        # Input date field
+        date_input = driver.find_element(By.ID, "share-post__scheduled-date")
+        date_input.clear()
+        date_input.send_keys(date_str)
+        print(f"Date set to: {date_str}")
+        time.sleep(1)
+
+        # Input time field
+        time_input = driver.find_element(By.ID, "share-post__scheduled-time")
+        time_input.clear()
+        time_input.send_keys(time_str)
+        print(f"Time set to: {time_str}")
+        time.sleep(1)
+
+        # Updated Code
+        next_button_selectors = [
+            "//button[@aria-label='Next']",  # Using aria-label
+            "//button[contains(@class, 'artdeco-button--primary') and .//span[text()='Next']]",  # Using class and text
+            "//span[text()='Next']/ancestor::button",  # Using the span text and ancestor button
+        ]
+
+        for selector in next_button_selectors:
+            try:
+                next_btn = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.XPATH, selector))
+                )
+                print(f"Found 'Next' button using selector: {selector}")
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_btn)
+                time.sleep(1)
+                driver.execute_script("arguments[0].click();", next_btn)
+                print("Clicked 'Next' button using JavaScript")
+                break
+            except Exception as e:
+                print(f"Failed with selector {selector}: {str(e)[:50]}...")
+        else:
+            raise Exception("Could not find or click the 'Next' button.")
+        
+        time.sleep(2)
+        
+        # Wait for and click the final "Schedule" button that appears after clicking Next
+        # Using multiple selectors to find the final Schedule button
+        schedule_confirmation_selectors = [
+            "//button[.//span[text()='Schedule']]",
+            "//button[contains(@class, 'share-actions__primary-action')]",
+            "//button[@id='ember415']",  # ID from your example, but IDs might change
+            "//button[contains(@class, 'artdeco-button--primary')][.//span[text()='Schedule']]"
+        ]
+        
+        for selector in schedule_confirmation_selectors:
+            try:
+                schedule_btn = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, selector))
+                )
+                print(f"Found final Schedule button with selector: {selector}")
+                # Scroll to ensure it's visible
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", schedule_btn)
+                time.sleep(1)
+                # Click using JavaScript
+                driver.execute_script("arguments[0].click();", schedule_btn)
+                break
+            except Exception as e:
+                print(f"Failed with selector {selector}: {str(e)[:50]}...")
+                continue
+        else:
+            # If all selectors fail, try a final JavaScript approach
+            print("Using JavaScript to find and click final Schedule button...")
+            driver.execute_script("""
+                var buttons = document.querySelectorAll('button');
+                for (var i = 0; i < buttons.length; i++) {
+                    if (buttons[i].textContent.trim() === 'Schedule') {
+                        buttons[i].click();
+                        return true;
+                    }
+                }
+                return false;
+            """)
+        
+        # Wait for confirmation that the post was scheduled
+        time.sleep(3)
+        driver.save_screenshot("schedule_confirmation.png")
+        
+        print(f"✅ Post scheduled for {date_str} at {time_str}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Scheduling failed: {e}")
+        driver.save_screenshot("schedule_error.png")
+        return False
+
 
 def create_post_alternative_route(driver, caption, image_path=None):
     """Alternative method to create post when the modal approach fails"""
@@ -342,66 +514,75 @@ def create_post_alternative_route(driver, caption, image_path=None):
         return False
 
 def create_linkedin_post(driver, caption, image_path=None):
-    if not open_post_modal(driver):
-        print("⚠️ Standard posting method failed. Trying alternative route...")
-        return create_post_alternative_route(driver, caption, image_path)
-
-    # Add image if provided
-    if image_path:
-        upload_image(driver, image_path)
-
-    # Fill in the caption - handle emojis by removing them or replacing them
     try:
-        text_area = WebDriverWait(driver, 5).until(
-            EC.presence_of_element_located((By.XPATH, "//div[contains(@role, 'textbox')]"))
-        )
-        # Remove or replace emoji characters to avoid BMP error
-        import re
+        if not open_post_modal(driver):
+            print("⚠️ Standard posting method failed. Trying alternative route...")
+            return create_post_alternative_route(driver, caption, image_path)
 
-        # Function to remove emojis
-        def remove_emojis(text):
-            emoji_pattern = re.compile("["
-                                       u"\U0001F600-\U0001F64F"  # emoticons
-                                       u"\U0001F300-\U0001F5FF"  # symbols & pictographs
-                                       u"\U0001F680-\U0001F6FF"  # transport & map symbols
-                                       u"\U0001F700-\U0001F77F"  # alchemical symbols
-                                       u"\U0001F780-\U0001F7FF"  # Geometric Symbols
-                                       u"\U0001F800-\U0001F8FF"  # Supplemental Arrows-C
-                                       u"\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
-                                       u"\U0001FA00-\U0001FA6F"  # Chess Symbols
-                                       u"\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
-                                       u"\U00002702-\U000027B0"  # Dingbats
-                                       u"\U000024C2-\U0001F251" 
-                                       "]+", flags=re.UNICODE)
-            return emoji_pattern.sub(r'', text)
+        # Add image if provided
+        if image_path:
+            upload_image(driver, image_path)
 
-        # Remove emojis from caption
-        clean_caption = remove_emojis(caption)
-        print("Note: Removed emojis from caption to avoid ChromeDriver BMP error")
-        # Get hashtags (already handled by your function)
-        hashtags = suggest_hashtags(clean_caption)
-        # Construct full caption without emojis
-        full_caption = f"{clean_caption}\n{' '.join(hashtags)}"
-        # Input the text
-        text_area.clear()
-        # Send text in smaller chunks to avoid issues
-        for chunk in [full_caption[i:i+100] for i in range(0, len(full_caption), 100)]:
-            text_area.send_keys(chunk)
-            time.sleep(0.5)
-        print(f"📝 Post caption filled (emojis removed)")
-        time.sleep(2)
-    except Exception as e:
-        print(f"❌ Failed to fill post caption: {e}")
-        return
+        # Fill in the caption - handle emojis by removing them or replacing them
+        try:
+            text_area = WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.XPATH, "//div[contains(@role, 'textbox')]"))
+            )
+            # Remove or replace emoji characters to avoid BMP error
+            import re
 
-    # Ask user before posting
-    confirm = input("🚀 Ready to post? [y/n]: ").strip().lower()
-    if confirm != 'y':
-        print("❌ Post canceled.")
-        return
+            # Function to remove emojis
+            def remove_emojis(text):
+                emoji_pattern = re.compile("["
+                                           u"\U0001F600-\U0001F64F"  # emoticons
+                                           u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+                                           u"\U0001F680-\U0001F6FF"  # transport & map symbols
+                                           u"\U0001F700-\U0001F77F"  # alchemical symbols
+                                           u"\U0001F780-\U0001F7FF"  # Geometric Symbols
+                                           u"\U0001F800-\U0001F8FF"  # Supplemental Arrows-C
+                                           u"\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
+                                           u"\U0001FA00-\U0001FA6F"  # Chess Symbols
+                                           u"\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
+                                           u"\U00002702-\U000027B0"  # Dingbats
+                                           u"\U000024C2-\U0001F251" 
+                                           "]+", flags=re.UNICODE)
+                return emoji_pattern.sub(r'', text)
 
-    # Submit the post using the new `submit_post` function
-    try:
-        submit_post(driver)
+            # Remove emojis from caption
+            clean_caption = remove_emojis(caption)
+            print("Note: Removed emojis from caption to avoid ChromeDriver BMP error")
+            # Get hashtags (already handled by your function)
+            hashtags = suggest_hashtags(clean_caption)
+            # Construct full caption without emojis
+            full_caption = f"{clean_caption}\n{' '.join(hashtags)}"
+            # Input the text
+            text_area.clear()
+            # Send text in smaller chunks to avoid issues
+            for chunk in [full_caption[i:i+100] for i in range(0, len(full_caption), 100)]:
+                text_area.send_keys(chunk)
+                time.sleep(0.5)
+            print(f"📝 Post caption filled (emojis removed)")
+            time.sleep(2)
+        except Exception as e:
+            print(f"❌ Failed to fill post caption: {e}")
+            return
+
+        # Ask user: Post now or later?
+        choice = input("📆 Post now or later? [now/later]: ").strip().lower()
+
+        if choice == "later":
+            success = schedule_post(driver)
+            if not success:
+                print("❌ Failed to schedule. Falling back to immediate post.")
+                submit_post(driver)
+        elif choice == "now":
+            submit_post(driver)
+        else:
+            print("❌ Invalid choice. Cancelling post.")
+            return
+
+        return True
+
     except Exception as e:
         print(f"❌ Post submission failed: {e}")
+        return False
