@@ -21,7 +21,11 @@ if __name__ == "__main__":
         if mode == "2":
             image_path = input("🖼️ Enter full image path:\n").strip()
 
-        create_linkedin_post(driver, caption, image_path)
+        # 🔁 New prompt for smart hashtag detection
+        smart_input = input("🤖 Use smart topic + hashtag detection? [y/n]: ").strip().lower()
+        smart_mode = smart_input == "y"
+
+        create_linkedin_post(driver, caption, image_path, smart=smart_mode)
     else:
         print("❌ Login failed. Cannot proceed.")
 

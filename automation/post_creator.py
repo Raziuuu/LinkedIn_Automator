@@ -4,7 +4,12 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from ai.ai_generator import suggest_hashtags
+import sys
+import os
+
+# Add the parent directory to the path so we can import from ai
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ai.ai_generator import suggest_hashtags, detect_topic_and_hashtags
 
 def submit_post(driver):
     try:
@@ -450,7 +455,7 @@ def schedule_post(driver):
         return False
 
 
-def create_post_alternative_route(driver, caption, image_path=None):
+def create_post_alternative_route(driver, caption, image_path=None, smart=False):
     """Alternative method to create post when the modal approach fails"""
     try:
         # Go directly to the post creation page
@@ -462,7 +467,20 @@ def create_post_alternative_route(driver, caption, image_path=None):
             text_area = WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, "//div[contains(@role, 'textbox')]"))
             )
-            hashtags = suggest_hashtags(caption)
+            if smart:
+                topic, hashtags = detect_topic_and_hashtags(clean_caption)
+                print(f"🧠 Detected Topic: {topic}")
+                print(f"#️⃣ Suggested Hashtags: {' '.join(hashtags)}")
+                
+                user_choice = input("Use suggested hashtags? [y = yes / e = edit / n = none]: ").strip().lower()
+                if user_choice == 'e':
+                    custom = input("Enter your own hashtags (space-separated): ").strip()
+                    hashtags = custom.split()
+                elif user_choice == 'n':
+                    hashtags = []
+            else:
+                hashtags = suggest_hashtags(clean_caption)
+
             full_caption = f"{caption}\n{' '.join(hashtags)}"
             text_area.send_keys(full_caption)
             print(f"📝 Post caption filled:\n{full_caption}")
@@ -513,76 +531,106 @@ def create_post_alternative_route(driver, caption, image_path=None):
         driver.save_screenshot("alternative_post_failure.png")
         return False
 
-def create_linkedin_post(driver, caption, image_path=None):
+def create_linkedin_post(driver, caption, image_path=None, smart=False):
     try:
         if not open_post_modal(driver):
             print("⚠️ Standard posting method failed. Trying alternative route...")
-            return create_post_alternative_route(driver, caption, image_path)
+            return create_post_alternative_route(driver, caption, image_path, smart)
 
-        # Add image if provided
+        # Upload image if present
         if image_path:
             upload_image(driver, image_path)
 
-        # Fill in the caption - handle emojis by removing them or replacing them
-        try:
-            text_area = WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.XPATH, "//div[contains(@role, 'textbox')]"))
-            )
-            # Remove or replace emoji characters to avoid BMP error
-            import re
+        # Wait for caption box
+        text_area = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.XPATH, "//div[contains(@role, 'textbox')]"))
+        )
 
-            # Function to remove emojis
-            def remove_emojis(text):
-                emoji_pattern = re.compile("["
-                                           u"\U0001F600-\U0001F64F"  # emoticons
-                                           u"\U0001F300-\U0001F5FF"  # symbols & pictographs
-                                           u"\U0001F680-\U0001F6FF"  # transport & map symbols
-                                           u"\U0001F700-\U0001F77F"  # alchemical symbols
-                                           u"\U0001F780-\U0001F7FF"  # Geometric Symbols
-                                           u"\U0001F800-\U0001F8FF"  # Supplemental Arrows-C
-                                           u"\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
-                                           u"\U0001FA00-\U0001FA6F"  # Chess Symbols
-                                           u"\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
-                                           u"\U00002702-\U000027B0"  # Dingbats
-                                           u"\U000024C2-\U0001F251" 
-                                           "]+", flags=re.UNICODE)
-                return emoji_pattern.sub(r'', text)
+        # Remove emojis to avoid ChromeDriver Unicode (BMP) issues
+        import re
+        def remove_emojis(text):
+            emoji_pattern = re.compile("[" 
+                                       u"\U0001F600-\U0001F64F"
+                                       u"\U0001F300-\U0001F5FF"
+                                       u"\U0001F680-\U0001F6FF"
+                                       u"\U0001F700-\U0001F77F"
+                                       u"\U0001F780-\U0001F7FF"
+                                       u"\U0001F800-\U0001F8FF"
+                                       u"\U0001F900-\U0001F9FF"
+                                       u"\U0001FA00-\U0001FA6F"
+                                       u"\U0001FA70-\U0001FAFF"
+                                       u"\U00002702-\U000027B0"
+                                       u"\U000024C2-\U0001F251"
+                                       "]+", flags=re.UNICODE)
+            return emoji_pattern.sub(r'', text)
 
-            # Remove emojis from caption
-            clean_caption = remove_emojis(caption)
-            print("Note: Removed emojis from caption to avoid ChromeDriver BMP error")
-            # Get hashtags (already handled by your function)
+        clean_caption = remove_emojis(caption)
+        print("Note: Removed emojis from caption to avoid ChromeDriver BMP error")
+
+        hashtags = []
+
+        if smart:
+            from ai.ai_generator import detect_topic, suggest_hashtags
+
+            print("🤖 Using smart topic + hashtag detection...")
+            # Combine text + image for richer context
+            content_context = clean_caption
+            if image_path:
+                from ai.ai_generator import caption_image_with_gemini
+                try:
+                    image_description = caption_image_with_gemini(image_path)
+                    content_context += "\n" + image_description
+                except:
+                    pass
+
+            topic = detect_topic(content_context)
+            print(f"🧠 Detected Topic: {topic}")
+
+            hashtags = suggest_hashtags(topic)
+            print("#️⃣ Suggested Hashtags:")
+            for tag in hashtags:
+                print(f"  - {tag}")
+
+            decision = input("Use suggested hashtags? [y = yes / e = edit / n = none]: ").strip().lower()
+            if decision == "e":
+                custom = input("✏️ Enter your hashtags (space-separated): ").strip()
+                hashtags = custom.split()
+            elif decision == "n":
+                hashtags = []
+
+        else:
+            from ai.ai_generator import suggest_hashtags
             hashtags = suggest_hashtags(clean_caption)
-            # Construct full caption without emojis
-            full_caption = f"{clean_caption}\n{' '.join(hashtags)}"
-            # Input the text
-            text_area.clear()
-            # Send text in smaller chunks to avoid issues
-            for chunk in [full_caption[i:i+100] for i in range(0, len(full_caption), 100)]:
-                text_area.send_keys(chunk)
-                time.sleep(0.5)
-            print(f"📝 Post caption filled (emojis removed)")
-            time.sleep(2)
-        except Exception as e:
-            print(f"❌ Failed to fill post caption: {e}")
-            return
 
-        # Ask user: Post now or later?
-        choice = input("📆 Post now or later? [now/later]: ").strip().lower()
+        full_caption = f"{clean_caption}\n{' '.join(hashtags)}"
 
-        if choice == "later":
+        # Fill the post text box
+        text_area.clear()
+        for chunk in [full_caption[i:i+100] for i in range(0, len(full_caption), 100)]:
+            text_area.send_keys(chunk)
+            time.sleep(0.5)
+
+        print("📝 Post caption filled.")
+
+        # Ask user: post now or later
+        post_choice = input("📆 Post now or later? [now/later]: ").strip().lower()
+        if post_choice == "later":
+            from automation.post_creator import schedule_post
             success = schedule_post(driver)
             if not success:
-                print("❌ Failed to schedule. Falling back to immediate post.")
+                print("❌ Scheduling failed. Posting now instead.")
+                from automation.post_creator import submit_post
                 submit_post(driver)
-        elif choice == "now":
+        elif post_choice == "now":
+            from automation.post_creator import submit_post
             submit_post(driver)
         else:
-            print("❌ Invalid choice. Cancelling post.")
-            return
+            print("❌ Invalid option. Post not submitted.")
+            return False
 
         return True
 
     except Exception as e:
         print(f"❌ Post submission failed: {e}")
         return False
+
