@@ -8,6 +8,7 @@ from selenium.common.exceptions import TimeoutException, ElementClickIntercepted
 import unicodedata
 from utils.tone_templates import templates, followup_templates
 from ai.memory_manager import has_messaged_before, record_message
+import os
 
 def personalize_message(name, company, tone="professional"):
     template_set = followup_templates if has_messaged_before(name) else templates
@@ -207,26 +208,135 @@ def message_contacts(driver, contacts):
 
 def start_bulk_messaging(driver):
     open_messaging_page(driver)
-
     contacts = get_recent_conversations(driver)
-    print(f"📬 Found {len(contacts)} recent chats.")
+    message_contacts(driver, contacts)
 
-    if not contacts:
-        print("⚠️ No recent chats found.")
-        return
+def log_message_sent(name):
+    """
+    Log that a message was sent to a user.
+    
+    Args:
+        name: Name of the user who was messaged
+    """
+    from ai.memory_manager import record_message
+    record_message(name)
+    print(f"✅ Logged message sent to {name}")
 
-    choice = select_message_target(driver)
-
-    if choice == "1":
-        message_contacts(driver, contacts)
-    elif choice == "2":
-        for idx, (name, _) in enumerate(contacts):
-            print(f"{idx+1}. {name}")
-        selected = input("Enter contact numbers (comma-separated): ").strip().split(",")
-
-        selected_indices = [int(i)-1 for i in selected if i.strip().isdigit()]
-        selected_contacts = [contacts[i] for i in selected_indices if i < len(contacts)]
-
-        message_contacts(driver, selected_contacts)
-    else:
-        print("❌ Invalid option.")
+def send_message_to_profile(driver, profile_url, message, resume_path=None):
+    """
+    Send a message to a user from their profile page.
+    
+    Args:
+        driver: Selenium WebDriver instance
+        profile_url: URL of the user's profile
+        message: Message to send
+        resume_path: Optional path to a resume file to attach
+        
+    Returns:
+        Boolean indicating success
+    """
+    try:
+        # Navigate to the profile
+        driver.get(profile_url)
+        time.sleep(3)
+        
+        # Find and click the message button
+        message_button_selectors = [
+            "//button[contains(@class, 'message-anywhere-button')]",
+            "//button[contains(text(), 'Message')]",
+            "//a[contains(@href, '/messaging/')]"
+        ]
+        
+        message_button = None
+        for selector in message_button_selectors:
+            try:
+                message_button = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, selector))
+                )
+                if message_button:
+                    break
+            except:
+                continue
+                
+        if not message_button:
+            print("⚠️ Message button not found. Skipping...")
+            return False
+            
+        # Scroll to the button and click it
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", message_button)
+        time.sleep(1)
+        message_button.click()
+        print("💬 Message dialog opened")
+        
+        time.sleep(2)
+        
+        # Find the message input field
+        message_input_selectors = [
+            "//div[@role='textbox']",
+            "//textarea[contains(@placeholder, 'Write a message')]",
+            "//div[contains(@class, 'msg-form__contenteditable')]"
+        ]
+        
+        message_input = None
+        for selector in message_input_selectors:
+            try:
+                message_input = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, selector))
+                )
+                if message_input:
+                    break
+            except:
+                continue
+                
+        if not message_input:
+            print("⚠️ Message input field not found. Skipping...")
+            return False
+            
+        # Clear any existing text and send the message
+        message_input.clear()
+        message_input.send_keys(message)
+        print("📝 Message entered")
+        
+        # Attach resume if provided
+        if resume_path and os.path.exists(resume_path):
+            try:
+                attach_button = driver.find_element(By.XPATH, "//button[contains(@aria-label, 'Attach')]")
+                attach_button.click()
+                time.sleep(1)
+                
+                # Find the file input and send the file path
+                file_input = driver.find_element(By.XPATH, "//input[@type='file']")
+                file_input.send_keys(os.path.abspath(resume_path))
+                print("📎 Resume attached")
+                time.sleep(2)
+            except Exception as e:
+                print(f"⚠️ Failed to attach resume: {str(e)}")
+        
+        # Find and click the send button
+        send_button_selectors = [
+            "//button[contains(@class, 'msg-form__send-button')]",
+            "//button[contains(text(), 'Send')]"
+        ]
+        
+        send_button = None
+        for selector in send_button_selectors:
+            try:
+                send_button = driver.find_element(By.XPATH, selector)
+                if send_button:
+                    break
+            except:
+                continue
+                
+        if not send_button:
+            print("⚠️ Send button not found. Skipping...")
+            return False
+            
+        send_button.click()
+        print("✅ Message sent successfully")
+        time.sleep(2)
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error sending message: {str(e)}")
+        return False

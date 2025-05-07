@@ -10,7 +10,7 @@ from selenium.common.exceptions import (
 )
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from ai.ai_generator import generate_connection_note
+
 
 
 def open_people_you_may_know(driver):

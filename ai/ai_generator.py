@@ -128,6 +128,39 @@ def detect_topic(content, image_path=None):
 # ✅ Hashtag Suggestions Based on Topic
 # -------------------------------------------------------------------
 def suggest_hashtags(topic):
-    prompt = f"Suggest 5 relevant LinkedIn hashtags for the topic: {topic}\nReturn them as a space-separated string."
-    result = generate_text(prompt)
-    return result.split()
+    prompt = f"Generate 5 relevant LinkedIn hashtags for the topic: {topic}. Return only the hashtags separated by spaces, no explanations."
+    hashtags_text = generate_text(prompt)
+    return [tag.strip() for tag in hashtags_text.split() if tag.strip()]
+
+def generate_alumni_message(name, college, department=None, graduation_year=None, purpose="connect"):
+    """
+    Generate a personalized message for reaching out to alumni.
+    
+    Args:
+        name: Name of the alumni
+        college: Name of the college/university
+        department: Optional department or field of study
+        graduation_year: Optional graduation year
+        purpose: Purpose of the message (connect, mentorship, referral)
+        
+    Returns:
+        A personalized message string
+    """
+    context = f"Generate a personalized LinkedIn message to reach out to {name}, an alumni of {college}"
+    if department:
+        context += f" who studied {department}"
+    if graduation_year:
+        context += f" and graduated in {graduation_year}"
+    
+    context += f". The purpose is to {purpose}. The message should be professional, friendly, and mention the shared connection of attending the same institution. Keep it concise (2-3 sentences) and ask for a brief conversation about their career journey. Do not include any placeholders like [Name] or [College] - use the actual values provided."
+    
+    return generate_text(context)
+
+from utils.prompt_templates import get_alumni_message_template
+
+# -------------------------------------------------------------------
+# ✅ Expose Alumni Message Template via AI Interface
+# -------------------------------------------------------------------
+def generate_alumni_message_template(**kwargs):
+    return get_alumni_message_template(**kwargs)
+

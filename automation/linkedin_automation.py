@@ -148,6 +148,74 @@ def start_login_process():
         driver.quit()
     return success
 
+def scroll_and_collect_profiles(driver, max_profiles=10):
+    """
+    Scrolls through the search results page and collects profile information.
+    
+    Args:
+        driver: Selenium WebDriver instance
+        max_profiles: Maximum number of profiles to collect
+        
+    Returns:
+        List of dictionaries containing profile information
+    """
+    print(f"🔍 Collecting up to {max_profiles} profiles...")
+    
+    profiles = []
+    last_height = driver.execute_script("return document.body.scrollHeight")
+    
+    while len(profiles) < max_profiles:
+        # Find all profile cards
+        profile_cards = driver.find_elements(By.XPATH, "//li[contains(@class, 'reusable-search__result-container')]")
+        
+        for card in profile_cards:
+            if len(profiles) >= max_profiles:
+                break
+                
+            try:
+                # Extract profile information
+                name_element = card.find_element(By.XPATH, ".//span[@class='entity-result__title-text']//a")
+                name = name_element.text.strip()
+                url = name_element.get_attribute("href")
+                
+                # Try to get headline
+                try:
+                    headline = card.find_element(By.XPATH, ".//div[@class='entity-result__primary-subtitle']").text.strip()
+                except:
+                    headline = "No headline available"
+                
+                # Check if we already have this profile
+                if not any(p["url"] == url for p in profiles):
+                    profiles.append({
+                        "name": name,
+                        "headline": headline,
+                        "url": url
+                    })
+                    print(f"✅ Collected profile: {name}")
+            except Exception as e:
+                print(f"⚠️ Error collecting profile: {str(e)}")
+                continue
+        
+        # Scroll down
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        
+        # Check if we've reached the bottom
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            # Try one more scroll
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            new_height = driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                print("📜 Reached end of page")
+                break
+                
+        last_height = new_height
+    
+    print(f"✅ Collected {len(profiles)} profiles")
+    return profiles
+
 # Entry point
 if __name__ == "__main__":
     start_login_process()
