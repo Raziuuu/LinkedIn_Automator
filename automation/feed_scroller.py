@@ -18,7 +18,7 @@ def scroll_slowly(driver, log_callback, max_posts):
     attempt = 0
     
     while post_count < max_posts and attempt < max_attempts:
-        posts = driver.find_elements(By.XPATH, "//div[contains(@class, 'feed-shared-update-v2')]")
+        posts = driver.find_elements(By.XPATH, "//div[contains(@class, 'feed-shared-update-v2') and .//div[contains(@class, 'update-components-text')]]")
         post_count = len(posts)
         log_callback(f"Found {post_count} posts so far...", level="debug")
         
@@ -58,8 +58,7 @@ def get_action_input(root, summary, post_index):
     dialog.geometry("500x400")
     dialog.resizable(False, False)
     
-    # Set custom logo
-    logo_path = "assets/logo.png"  # Replace with your logo path, e.g., "images/my_logo.png"
+    logo_path = "assets/logo.png"  # Replace with your logo path
     try:
         logo_img = Image.open(logo_path)
         logo_img = logo_img.resize((32, 32), Image.Resampling.LANCZOS)
@@ -114,11 +113,9 @@ def process_post(driver, post, index, root, log_callback):
     try:
         scroll_to_element(driver, post)
         
-        # Log post identifier
         post_id = driver.execute_script("return arguments[0].getAttribute('data-id');", post) or "unknown"
         log_callback(f"Processing post {index} with data-id: {post_id}", level="debug")
         
-        # Wait for images
         try:
             WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, ".//img[contains(@class, 'ivm-view-attr__img')]"))
@@ -127,11 +124,9 @@ def process_post(driver, post, index, root, log_callback):
         except TimeoutException:
             log_callback(f"No images found or failed to load for post {index}", level="debug")
         
-        # Extract post text with fallbacks
         post_text = "No text found"
         try:
-            # Primary: Try feed-shared-text container
-            post_text_elements = post.find_elements(By.XPATH, ".//div[contains(@class, 'feed-shared-text')]//span[@dir='ltr']")
+            post_text_elements = post.find_elements(By.XPATH, ".//div[contains(@class, 'update-components-text')]//span[@dir='ltr' and not(@aria-hidden='true')]")
             if post_text_elements:
                 raw_texts = []
                 for elem in post_text_elements:
@@ -143,9 +138,8 @@ def process_post(driver, post, index, root, log_callback):
                 post_text = " ".join([re.sub(r'\s+', ' ', text) for text in raw_texts if text.strip()]) or "No text found"
                 log_callback(f"Primary text for post {index}: {post_text[:100]}...", level="debug")
             
-            # Fallback: Broader span[@dir='ltr']
             if post_text == "No text found":
-                post_text_elements = post.find_elements(By.XPATH, ".//span[@dir='ltr']")
+                post_text_elements = post.find_elements(By.XPATH, ".//span[@dir='ltr' and not(@aria-hidden='true')]")
                 raw_texts = []
                 for elem in post_text_elements:
                     raw_html = driver.execute_script("return arguments[0].innerHTML;", elem)
@@ -156,29 +150,27 @@ def process_post(driver, post, index, root, log_callback):
                 post_text = " ".join([re.sub(r'\s+', ' ', text) for text in raw_texts if text.strip()]) or "No text found"
                 log_callback(f"Fallback text for post {index}: {post_text[:100]}...", level="debug")
             
-            # Log full post HTML if still no text
             if post_text == "No text found":
                 full_html = driver.execute_script("return arguments[0].outerHTML;", post)
                 log_callback(f"Full post HTML for post {index}: {full_html[:500]}...", level="debug")
         except Exception as e:
             log_callback(f"Error extracting text for post {index}: {str(e)}", level="debug")
         
-        # Summarize post
         summary = summarize_post(post_text, index)
         log_callback(f"Summary: {summary}", level="user")
         
-        # Get user action
         action, custom_comment = get_action_input(root, summary, index)
         log_callback(f"Selected action for post {index}: {action}", level="user")
         
         if action == "like":
             try:
-                like_button = post.find_element(By.XPATH, ".//button[contains(@class, 'social-actions-button') and contains(@class, 'like-button')]")
+                like_button = post.find_element(By.XPATH, ".//button[contains(@class, 'social-actions-button') and contains(@aria-label, 'React Like')]")
                 scroll_to_element(driver, like_button)
                 like_button.click()
                 log_callback(f"Liked post {index}", level="user")
             except NoSuchElementException:
-                log_callback(f"Like button not found for post {index}", level="user")
+                button_html = driver.execute_script("return arguments[0].outerHTML;", post)
+                log_callback(f"Like button not found for post {index}. Post HTML: {button_html[:500]}...", level="debug")
                 return False
         elif action == "comment":
             try:
@@ -194,7 +186,6 @@ def process_post(driver, post, index, root, log_callback):
                 comment_box.send_keys(custom_comment or "Great post!")
                 log_callback(f"Typed comment for post {index}: {custom_comment or 'Great post!'}", level="debug")
                 
-                # Try clicking Post button
                 try:
                     post_button = WebDriverWait(driver, 3).until(
                         EC.element_to_be_clickable((By.XPATH, ".//button[contains(@class, 'comments-comment-box__submit-button')]"))
@@ -232,7 +223,7 @@ def engage_feed(driver, max_posts=5, root=None, log_callback=lambda msg, level: 
                 log_callback("No posts found in feed", level="user")
                 return
             
-            post_containers = driver.find_elements(By.XPATH, "//div[contains(@class, 'feed-shared-update-v2')]")
+            post_containers = driver.find_elements(By.XPATH, "//div[contains(@class, 'feed-shared-update-v2') and .//div[contains(@class, 'update-components-text')]]")
             log_callback(f"Found {len(post_containers)} posts to process", level="info")
             
             for index, post in enumerate(post_containers, processed_posts + 1):
@@ -253,5 +244,6 @@ def engage_feed(driver, max_posts=5, root=None, log_callback=lambda msg, level: 
                 time.sleep(3)
         
         log_callback(f"Processed {processed_posts} posts", level="user")
+        log_callback("✅ Feed interaction completed", level="user")
     except Exception as e:
         log_callback(f"Error in feed engagement: {str(e)}", level="user")
