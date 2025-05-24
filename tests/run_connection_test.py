@@ -9,10 +9,17 @@ from automation.linkedin_automation import create_driver, load_credentials, logi
 from automation.connection_requester import process_connections
 
 if __name__ == "__main__":
-    creds = load_credentials()
+    username, password = load_credentials()
+    if not username or not password:
+        print("Error: Could not load credentials. Please check your credentials.json file.")
+        sys.exit(1)
+
     driver = create_driver()
-
-    if login_linkedin(driver, creds["username"], creds["password"]):
-        process_connections(driver, max_requests=5)
-
-    driver.quit()
+    try:
+        if login_linkedin(driver, username, password):
+            print("Successfully logged in to LinkedIn")
+            process_connections(driver, max_requests=5)
+        else:
+            print("Failed to log in to LinkedIn")
+    finally:
+        driver.quit()

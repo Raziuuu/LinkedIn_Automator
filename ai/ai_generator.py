@@ -1,6 +1,4 @@
 import os
-import requests
-import base64
 import io
 from dotenv import load_dotenv
 from PIL import Image
@@ -8,43 +6,86 @@ from PIL import Image
 # Load environment variables
 load_dotenv()
 
-# AI Backend Selection: 'mistral' (local) or 'gemini' (cloud)
-AI_BACKEND = os.getenv("AI_BACKEND", "mistral").lower()
-
 # Gemini API Setup
-# Gemini Setup (Import globally once)
-import google.generativeai as genai
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+try:
+    import google.generativeai as genai
+    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+    
+    # Configure Gemini API
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not found in environment variables")
+    
+    genai.configure(api_key=api_key)
+except ImportError:
+    raise ImportError("Google Generative AI package not found. Please install with: pip install google-generativeai")
 
+# Model name constant
+GEMINI_MODEL = "gemini-1.5-flash"
 
 # -------------------------------------------------------------------
 # ✅ General Text Generation
 # -------------------------------------------------------------------
 def generate_text(prompt):
-    if AI_BACKEND == "gemini":
-        return generate_with_gemini(prompt)
-    return generate_with_mistral(prompt)
-
-def generate_with_mistral(prompt):
-    try:
-        response = requests.post("http://localhost:11434/api/generate", json={
-            "model": "mistral",
-            "prompt": prompt,
-            "stream": False
-        })
-        return response.json().get("response", "").strip()
-    except Exception as e:
-        print(f"[❌] Mistral Error: {e}")
-        return "(Error generating with Mistral)"
+    return generate_with_gemini(prompt)
 
 def generate_with_gemini(prompt):
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
+        model = genai.GenerativeModel(GEMINI_MODEL)
+        response = model.generate_content(
+            prompt,
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            }
+        )
         return response.text.strip()
     except Exception as e:
         print(f"[❌] Gemini Error: {e}")
         return "(Error generating with Gemini)"
+
+# -------------------------------------------------------------------
+# ✅ LinkedIn Message Enhancement
+# -------------------------------------------------------------------
+def enhance_linkedin_message(base_message, topic, tone="professional"):
+    """
+    Enhance a LinkedIn message with Gemini based on a topic and tone.
+    
+    Args:
+        base_message (str): The base template message
+        topic (str): The topic or context for the message
+        tone (str): The desired tone (professional, friendly, casual)
+    
+    Returns:
+        str: Enhanced message
+    """
+    prompt = f"""
+    Enhance this LinkedIn message keeping the same {tone} tone, but incorporating the topic: '{topic}'.
+    
+    Original template: {base_message}
+    
+    Rules:
+    1. Keep the message under 400 characters
+    2. Maintain the {tone} tone
+    3. Address the recipient as {{name}} (keep these placeholders)
+    4. Make it specific to the topic: {topic}
+    5. Make it sound natural and conversational
+    6. Include a clear call to action
+    
+    Return only the enhanced message text, preserving the {{name}} placeholder.
+    """
+    
+    enhanced_message = generate_text(prompt)
+    
+    # Clean up the enhanced message
+    if enhanced_message:
+        enhanced_message = enhanced_message.strip('"\'')
+        return enhanced_message
+    
+    # Return original if enhancement fails
+    return base_message
 
 # -------------------------------------------------------------------
 # ✅ Follow-up Message Generator
@@ -61,13 +102,12 @@ def suggest_hashtags_basic(caption_text):
     return output.split() if output else []
 
 # -------------------------------------------------------------------
-# ✅ Image Captioning (Gemini Only)
+# ✅ Image Captioning (Gemini)
 # -------------------------------------------------------------------
 def caption_image_with_gemini(image_path):
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel(GEMINI_MODEL)
         image = Image.open(image_path)
-
         response = model.generate_content([
             "Describe this image for a LinkedIn post:",
             image
@@ -78,24 +118,27 @@ def caption_image_with_gemini(image_path):
         return "(Error generating image caption)"
 
 def generate_caption_from_image(image_path):
-    if AI_BACKEND == "gemini":
-        return caption_image_with_gemini(image_path)
-    else:
-        raise NotImplementedError("Image captioning is currently only available via Gemini API.")
+    return caption_image_with_gemini(image_path)
 
 # -------------------------------------------------------------------
 # ✅ Smart Topic & Hashtag Detection (Text + Optional Image)
 # -------------------------------------------------------------------
 def detect_topic_and_hashtags(caption_text, image_path=None):
-    if image_path and AI_BACKEND == "gemini":
+    if image_path:
         image_caption = caption_image_with_gemini(image_path)
         caption_text += "\n" + image_caption
 
     prompt = (
         "You are an assistant that helps generate topics and hashtags for LinkedIn posts.\n"
         "Analyze the following post content and reply using exactly this format:\n\n"
-        "Topic: <One concise phrase>\n"
+        "Topic: <One concise phrase that captures the professional focus>\n"
         "Hashtags: #tag1 #tag2 #tag3 #tag4 #tag5\n\n"
+        "Hashtag guidelines:\n"
+        "1. Be specific and relevant to the professional context\n"
+        "2. Avoid generic hashtags like #motivation, #success, or #life\n"
+        "3. Include at least one industry-specific hashtag\n"
+        "4. Include at least one skill-related hashtag if applicable\n"
+        "5. Maximum 5 hashtags total\n\n"
         "No explanations, no options, no introductions. Just output exactly like the format above.\n\n"
         f"Post:\n{caption_text}"
     )
@@ -118,7 +161,7 @@ def detect_topic_and_hashtags(caption_text, image_path=None):
 # ✅ Topic-Only Detection (For Simpler Logic)
 # -------------------------------------------------------------------
 def detect_topic(content, image_path=None):
-    if image_path and AI_BACKEND == "gemini":
+    if image_path:
         image_caption = caption_image_with_gemini(image_path)
         content += "\n" + image_caption
     prompt = f"What is the main topic of this LinkedIn post:\n\n{content}\n\nRespond with a short phrase."
@@ -128,39 +171,45 @@ def detect_topic(content, image_path=None):
 # ✅ Hashtag Suggestions Based on Topic
 # -------------------------------------------------------------------
 def suggest_hashtags(topic):
-    prompt = f"Generate 5 relevant LinkedIn hashtags for the topic: {topic}. Return only the hashtags separated by spaces, no explanations."
-    hashtags_text = generate_text(prompt)
-    return [tag.strip() for tag in hashtags_text.split() if tag.strip()]
-
-def generate_alumni_message(name, college, department=None, graduation_year=None, purpose="connect"):
-    """
-    Generate a personalized message for reaching out to alumni.
-    
-    Args:
-        name: Name of the alumni
-        college: Name of the college/university
-        department: Optional department or field of study
-        graduation_year: Optional graduation year
-        purpose: Purpose of the message (connect, mentorship, referral)
-        
-    Returns:
-        A personalized message string
-    """
-    context = f"Generate a personalized LinkedIn message to reach out to {name}, an alumni of {college}"
-    if department:
-        context += f" who studied {department}"
-    if graduation_year:
-        context += f" and graduated in {graduation_year}"
-    
-    context += f". The purpose is to {purpose}. The message should be professional, friendly, and mention the shared connection of attending the same institution. Keep it concise (2-3 sentences) and ask for a brief conversation about their career journey. Do not include any placeholders like [Name] or [College] - use the actual values provided."
-    
-    return generate_text(context)
-
-from utils.prompt_templates import get_alumni_message_template
+    prompt = (
+        f"Suggest 3-5 relevant LinkedIn hashtags for the topic: {topic}\n"
+        "Guidelines:\n"
+        "1. Be specific and relevant to the professional context\n"
+        "2. Avoid generic hashtags like #motivation, #success, or #life\n"
+        "3. Include at least one industry-specific hashtag\n"
+        "4. Include at least one skill-related hashtag if applicable\n"
+        "5. Make hashtags concise - preferably 1-2 words each\n"
+        "Return them as a space-separated string without explanations."
+    )
+    result = generate_text(prompt)
+    return result.split()
 
 # -------------------------------------------------------------------
-# ✅ Expose Alumni Message Template via AI Interface
+# ✅ Caption Enhancement
 # -------------------------------------------------------------------
-def generate_alumni_message_template(**kwargs):
-    return get_alumni_message_template(**kwargs)
-
+def enhance_caption(caption):
+    prompt = (
+        "You are a professional LinkedIn content writer. Enhance and restructure this post caption following the exact structure below:\n\n"
+        "# Lines 1-2: HOOK – Grab attention\n"
+        "# Use a bold statement, thought-provoking question, or relatable problem.\n\n"
+        "# Lines 3-6: CONTEXT – Explain what you're working on or the value being shared\n"
+        "# Keep sentences short, use line breaks, and focus on benefits not just features.\n\n"
+        "# Lines 7-8: CHALLENGE or PERSONAL TOUCH – What was a roadblock or learning?\n"
+        "# Add authenticity and encourage engagement.\n\n"
+        "# Lines 9-10: WHY IT MATTERS – Show the impact, value, or relevance\n"
+        "# Make it relatable to your audience (developers, recruiters, entrepreneurs, etc.)\n\n"
+        "# Lines 11-12: CALL TO ACTION – Encourage replies, shares, or connections\n"
+        "# Be conversational and soft with the CTA.\n\n"
+        "# Line 13: HASHTAGS – Use 3-5 relevant and specific tags\n"
+        "# Avoid generic ones like #motivation or #life\n\n"
+        "Return only the enhanced caption following this structure, no explanations or additional text.\n"
+        "DO NOT include the section headers or tips in your response, only the actual content.\n\n"
+        f"Original caption:\n{caption}"
+    )
+    
+    try:
+        enhanced = generate_text(prompt)
+        return enhanced.strip()
+    except Exception as e:
+        print(f"[❌] Caption enhancement error: {e}")
+        return caption  # Return original caption if enhancement fails

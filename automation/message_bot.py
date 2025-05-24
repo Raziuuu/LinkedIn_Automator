@@ -1,76 +1,94 @@
 import time
 from selenium.webdriver.common.by import By
-from ai.ai_generator import generate_connection_message
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException
-import unicodedata
-from utils.tone_templates import templates, followup_templates
-from ai.memory_manager import has_messaged_before, record_message
+from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, StaleElementReferenceException
 import os
-
-def personalize_message(name, company, tone="professional"):
-    template_set = followup_templates if has_messaged_before(name) else templates
-    template = template_set[tone]
-    return template.format(name=name, company=company or "your organization")
-
-def choose_tone():
-    print("\n🎨 Choose message tone:")
-    print("1. Professional")
-    print("2. Friendly")
-    print("3. Casual")
-    tone_map = {"1": "professional", "2": "friendly", "3": "casual"}
-    choice = input("Enter your choice [1/2/3]: ").strip()
-    return tone_map.get(choice, "professional")
-
 
 def remove_non_bmp_characters(text):
     """Remove non-BMP Unicode characters from the given text."""
     return ''.join(char for char in text if ord(char) <= 0xFFFF)
 
-
 def open_messaging_page(driver):
+    """Navigate to LinkedIn messaging page."""
     driver.get("https://www.linkedin.com/messaging/")
     time.sleep(5)
-    print("💬 Opened LinkedIn Messaging page.")
 
 def get_recent_conversations(driver, max_contacts=5):
-    threads = driver.find_elements(By.XPATH, "//li[contains(@class, 'msg-conversations-container__convo-item')]")
-    contacts = []
-
-    for thread in threads[:max_contacts]:
-        try:
-            name_elem = thread.find_element(By.CLASS_NAME, "msg-conversation-listitem__participant-names")
-            name = name_elem.text.strip()
-            contacts.append((name, thread))
-        except:
-            continue
-
-    return contacts
-
-def select_message_target(driver):
-    choice = input("📢 Do you want to:\n1. Broadcast to recent contacts\n2. Pick specific contacts\nEnter 1 or 2: ").strip()
-    return choice
-
-
-def send_message(driver, thread, name, message):
+    """Get recent conversation threads from the messaging page."""
     try:
-        # Open the conversation thread with retries
+        # Updated XPath to match the provided HTML structure
+        threads = WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'msg-conversation-listitem__link')]"))
+        )
+        contacts = []
+        for thread in threads[:max_contacts]:
+            try:
+                name_elem = thread.find_element(By.XPATH, ".//h3[contains(@class, 'msg-conversation-listitem__participant-names')]//span")
+                name = name_elem.text.strip()
+                if name:
+                    contacts.append((name, thread))
+            except:
+                continue
+        return contacts
+    except Exception as e:
+        return []
+
+def refresh_thread(driver, name):
+    """Attempt to re-fetch the conversation thread for the given name."""
+    try:
+        threads = WebDriverWait(driver, 5).until(
+            EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'msg-conversation-listitem__link')]"))
+        )
+        for thread in threads:
+            try:
+                name_elem = thread.find_element(By.XPATH, ".//h3[contains(@class, 'msg-conversation-listitem__participant-names')]//span")
+                if name_elem.text.strip() == name:
+                    return thread
+            except:
+                continue
+        return None
+    except:
+        return None
+
+def send_message(driver, thread, name, message, log_callback=lambda msg, level="info": None, resume_path=None):
+    """Send a message to a contact via their conversation thread."""
+    try:
+        # Attempt to click the conversation thread with retries
+        current_thread = thread
         for attempt in range(3):
             try:
-                thread.click()
-                break
-            except (ElementClickInterceptedException, StaleElementReferenceException):
-                print(f"⚠️ Click attempt {attempt+1} failed, retrying...")
+                log_callback(f"Clicking conversation thread for {name} (attempt {attempt+1})", level="debug")
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", current_thread)
                 time.sleep(1)
-                if attempt == 2:
-                    driver.execute_script("arguments[0].click();", thread)
+                current_thread.click()
+                break
+            except (ElementClickInterceptedException, StaleElementReferenceException) as e:
+                log_callback(f"Click attempt {attempt+1} failed: {str(e)}", level="debug")
+                if attempt < 2:
+                    # Try to refresh the thread
+                    log_callback(f"Attempting to refresh thread for {name}", level="debug")
+                    current_thread = refresh_thread(driver, name)
+                    if not current_thread:
+                        log_callback(f"Could not refresh thread for {name}", level="debug")
+                        break
+                    time.sleep(1)
+                else:
+                    log_callback(f"Failed to click conversation thread after {attempt+1} attempts", level="user")
+                    return False
+        
+        if not current_thread:
+            log_callback(f"Failed to locate conversation thread for {name}", level="user")
+            return False
         
         # Wait for the conversation to load
-        time.sleep(3)
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'msg-conversation-card__content')]"))
+        )
+        time.sleep(3)  # Increased wait for stability
         
-        # Find the message box
+        # Find the message input box
         message_box_xpaths = [
             "//div[contains(@class, 'msg-form__contenteditable') and @role='textbox']",
             "//div[contains(@class, 'msg-form__message-texteditor')]//div[@role='textbox']",
@@ -89,254 +107,106 @@ def send_message(driver, thread, name, message):
                 continue
         
         if not message_box:
-            raise Exception("Message input box not found")
+            log_callback("Message input box not found", level="user")
+            return False
             
         # Clear any existing text and focus
         driver.execute_script("arguments[0].innerHTML = '';", message_box)
         driver.execute_script("arguments[0].focus();", message_box)
         time.sleep(1)
         
-        # Send the entire message at once
-        message_box.send_keys(message)
+        # Send the message
+        clean_message = remove_non_bmp_characters(message)
+        message_box.send_keys(clean_message)
         time.sleep(1)
+        
+        # Attach resume if provided
+        if resume_path and os.path.exists(resume_path):
+            try:
+                attach_button = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[contains(@aria-label, 'Attach')]"))
+                )
+                attach_button.click()
+                time.sleep(1)
+                
+                file_input = driver.find_element(By.XPATH, "//input[@type='file']")
+                file_input.send_keys(os.path.abspath(resume_path))
+                log_callback("Resume attached", level="info")
+                time.sleep(2)
+            except Exception as e:
+                log_callback(f"Failed to attach resume: {str(e)}", level="user")
         
         # Try multiple methods to send the message
         send_success = False
         
-        # METHOD 1: Direct CSS selector for the send button (most reliable based on your HTML)
+        # Method 1: Direct CSS selector for the send button
         try:
             send_button = WebDriverWait(driver, 3).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button.msg-form__send-button"))
             )
             driver.execute_script("arguments[0].click();", send_button)
-            print("✅ Message sent via direct CSS selector.")
-            record_message(name, message)
+            log_callback("Message sent via direct CSS selector", level="info")
             send_success = True
         except Exception as e:
-            print(f"⚠️ CSS selector method failed: {str(e)}")
+            log_callback(f"CSS selector method failed: {str(e)}", level="debug")
         
-        # METHOD 2: Try using XPath if CSS selector failed
+        # Method 2: Try XPath if CSS selector failed
+        if not send_success:
+            send_button_xpaths = [
+                "//button[contains(@class, 'msg-form__send-button')]",
+                "//div[contains(@class, 'msg-form__right-actions')]//button[text()='Send']",
+                "//footer//button[text()='Send']"
+            ]
+            
+            for xpath in send_button_xpaths:
+                try:
+                    send_button = WebDriverWait(driver, 3).until(
+                        EC.element_to_be_clickable((By.XPATH, xpath))
+                    )
+                    driver.execute_script("arguments[0].click();", send_button)
+                    log_callback("Message sent via XPath method", level="info")
+                    send_success = True
+                    break
+                except:
+                    continue
+            
+            if not send_success:
+                log_callback("XPath methods failed", level="debug")
+        
+        # Method 3: Try keyboard shortcuts as a fallback
         if not send_success:
             try:
-                send_button_xpaths = [
-                    "//button[contains(@class, 'msg-form__send-button')]",
-                    "//div[contains(@class, 'msg-form__right-actions')]//button[text()='Send']",
-                    "//footer//button[text()='Send']"
-                ]
-                
-                for xpath in send_button_xpaths:
-                    try:
-                        send_button = WebDriverWait(driver, 3).until(
-                            EC.element_to_be_clickable((By.XPATH, xpath))
-                        )
-                        driver.execute_script("arguments[0].click();", send_button)
-                        print("✅ Message sent via XPath method.")
-                        send_success = True
-                        break
-                    except:
-                        continue
-            except Exception as e:
-                print(f"⚠️ XPath methods failed: {str(e)}")
-        
-        # METHOD 3: Try clicking the send toggle options button and then pressing Enter
-        if not send_success:
-            try:
-                print("⚠️ Trying send toggle options method...")
-                toggle_button = WebDriverWait(driver, 3).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button.msg-form__send-toggle"))
-                )
-                toggle_button.click()
-                time.sleep(1)
-                
-                # After opening the toggle, press Enter - this often works
-                message_box.send_keys(Keys.CONTROL + Keys.RETURN)
-                send_success = True
-                print("✅ Message sent using toggle + keyboard shortcut.")
-            except Exception as e:
-                print(f"⚠️ Toggle method failed: {str(e)}")
-        
-        # METHOD 4: Final fallback - try keyboard shortcuts
-        if not send_success:
-            try:
-                print("⚠️ Trying keyboard shortcuts...")
-                # Try Shift+Enter
-                message_box.send_keys(Keys.SHIFT + Keys.RETURN)
-                time.sleep(0.5)
-                
-                # Try Ctrl+Enter
-                message_box.send_keys(Keys.CONTROL + Keys.RETURN)
-                time.sleep(0.5)
-                
-                # Try plain Enter
+                log_callback("Trying keyboard shortcuts...", level="debug")
                 message_box.send_keys(Keys.RETURN)
-                
-                print("✅ Message attempted using keyboard shortcuts.")
+                log_callback("Message sent using keyboard shortcut", level="info")
                 send_success = True
             except Exception as e:
-                print(f"⚠️ Keyboard shortcuts failed: {str(e)}")
+                log_callback(f"Keyboard shortcut failed: {str(e)}", level="debug")
         
         if not send_success:
-            print("❌ All send methods failed. Message may not have been sent.")
-            
-        # Wait a moment before proceeding
-        time.sleep(2)
-            
-    except Exception as e:
-        print(f"❌ Failed to send message: {str(e)}")
-        print("⚠️ Moving to next contact...")
-        
-
-def message_contacts(driver, contacts):
-    for name, thread in contacts:
-        print("\n👤 Contact:", name)
-        from automation.message_bot import personalize_message, choose_tone
-        tone = choose_tone()
-        company = "ABC Corp"  # Placeholder, could be extracted later from profile or chat
-        ai_msg = personalize_message(name, company, tone)
-
-
-        print("💬 Suggested message:\n", ai_msg)
-
-        action = input("🤖 Send this message? [y = yes / e = edit / s = skip]: ").strip().lower()
-        if action == "y":
-            send_message(driver, thread, name, ai_msg)
-        elif action == "e":
-            custom_msg = input("✍️ Enter your custom message: ").strip()
-            send_message(driver, thread, custom_msg)
-        else:
-            print("⏭️ Skipped.")
-
-def start_bulk_messaging(driver):
-    open_messaging_page(driver)
-    contacts = get_recent_conversations(driver)
-    message_contacts(driver, contacts)
-
-def log_message_sent(name):
-    """
-    Log that a message was sent to a user.
-    
-    Args:
-        name: Name of the user who was messaged
-    """
-    from ai.memory_manager import record_message
-    record_message(name)
-    print(f"✅ Logged message sent to {name}")
-
-def send_message_to_profile(driver, profile_url, message, resume_path=None):
-    """
-    Send a message to a user from their profile page.
-    
-    Args:
-        driver: Selenium WebDriver instance
-        profile_url: URL of the user's profile
-        message: Message to send
-        resume_path: Optional path to a resume file to attach
-        
-    Returns:
-        Boolean indicating success
-    """
-    try:
-        # Navigate to the profile
-        driver.get(profile_url)
-        time.sleep(3)
-        
-        # Find and click the message button
-        message_button_selectors = [
-            "//button[contains(@class, 'message-anywhere-button')]",
-            "//button[contains(text(), 'Message')]",
-            "//a[contains(@href, '/messaging/')]"
-        ]
-        
-        message_button = None
-        for selector in message_button_selectors:
-            try:
-                message_button = WebDriverWait(driver, 5).until(
-                    EC.element_to_be_clickable((By.XPATH, selector))
-                )
-                if message_button:
-                    break
-            except:
-                continue
-                
-        if not message_button:
-            print("⚠️ Message button not found. Skipping...")
+            log_callback("All send methods failed. Message may not have been sent.", level="user")
             return False
             
-        # Scroll to the button and click it
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", message_button)
-        time.sleep(1)
-        message_button.click()
-        print("💬 Message dialog opened")
-        
         time.sleep(2)
-        
-        # Find the message input field
-        message_input_selectors = [
-            "//div[@role='textbox']",
-            "//textarea[contains(@placeholder, 'Write a message')]",
-            "//div[contains(@class, 'msg-form__contenteditable')]"
-        ]
-        
-        message_input = None
-        for selector in message_input_selectors:
-            try:
-                message_input = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, selector))
-                )
-                if message_input:
-                    break
-            except:
-                continue
-                
-        if not message_input:
-            print("⚠️ Message input field not found. Skipping...")
-            return False
-            
-        # Clear any existing text and send the message
-        message_input.clear()
-        message_input.send_keys(message)
-        print("📝 Message entered")
-        
-        # Attach resume if provided
-        if resume_path and os.path.exists(resume_path):
-            try:
-                attach_button = driver.find_element(By.XPATH, "//button[contains(@aria-label, 'Attach')]")
-                attach_button.click()
-                time.sleep(1)
-                
-                # Find the file input and send the file path
-                file_input = driver.find_element(By.XPATH, "//input[@type='file']")
-                file_input.send_keys(os.path.abspath(resume_path))
-                print("📎 Resume attached")
-                time.sleep(2)
-            except Exception as e:
-                print(f"⚠️ Failed to attach resume: {str(e)}")
-        
-        # Find and click the send button
-        send_button_selectors = [
-            "//button[contains(@class, 'msg-form__send-button')]",
-            "//button[contains(text(), 'Send')]"
-        ]
-        
-        send_button = None
-        for selector in send_button_selectors:
-            try:
-                send_button = driver.find_element(By.XPATH, selector)
-                if send_button:
-                    break
-            except:
-                continue
-                
-        if not send_button:
-            print("⚠️ Send button not found. Skipping...")
-            return False
-            
-        send_button.click()
-        print("✅ Message sent successfully")
-        time.sleep(2)
-        
+        log_callback(f"Message successfully sent to {name}", level="user")
         return True
         
     except Exception as e:
-        print(f"❌ Error sending message: {str(e)}")
+        log_callback(f"Failed to send message to {name}: {str(e)}", level="user")
         return False
+
+def start_bulk_messaging(driver, contacts, message, log_callback=lambda msg, level="info": None, resume_path=None):
+    """Send bulk messages to a list of contacts."""
+    log_callback("Starting bulk messaging process...", level="user")
+    for name, thread in contacts:
+        try:
+            log_callback(f"Messaging contact: {name}", level="user")
+            success = send_message(driver, thread, name, message, log_callback=log_callback, resume_path=resume_path)
+            if success:
+                log_callback(f"Message sent to {name}", level="user")
+            else:
+                log_callback(f"Failed to send message to {name}", level="user")
+            time.sleep(3)
+        except Exception as e:
+            log_callback(f"Error messaging {name}: {str(e)}", level="user")
+    log_callback("Bulk messaging completed", level="user")

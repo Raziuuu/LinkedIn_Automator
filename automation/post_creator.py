@@ -5,44 +5,51 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import sys
-import os
 
 # Add the parent directory to the path so we can import from ai
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ai.ai_generator import suggest_hashtags, detect_topic_and_hashtags
+from ai.ai_generator import suggest_hashtags, detect_topic_and_hashtags, enhance_caption
 
-def submit_post(driver):
+def submit_post(driver, log_callback=None):
     try:
+        # Helper function for logging
+        def log(message):
+            # Print to console
+            print(message)
+            # If callback is provided, also send to GUI
+            if log_callback:
+                log_callback(message)
+                
         # Try multiple methods to find the "Post" button
         try:
-            print("Looking for Post button...")
+            log("Looking for Post button...")
             # Method 1: Using visible text
             post_btn = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, "//button[.//span[text()='Post']]"))
             )
-            print("Found Post button by visible text")
+            log("Found Post button by visible text")
         except:
             try:
                 # Method 2: Using class name
                 post_btn = WebDriverWait(driver, 10).until(
                     EC.element_to_be_clickable((By.XPATH, "//button[contains(@class, 'share-actions__primary-action') and contains(@class, 'artdeco-button--primary')]"))
                 )
-                print("Found Post button by class name")
+                log("Found Post button by class name")
             except:
                 try:
                     # Method 3: Using parent container
                     post_btn = WebDriverWait(driver, 10).until(
                         EC.element_to_be_clickable((By.XPATH, "//div[@class='share-box_actions']//button[.//span[text()='Post']]"))
                     )
-                    print("Found Post button by parent container")
+                    log("Found Post button by parent container")
                 except:
                     # Fallback: Iterate through all buttons
-                    print("Primary methods failed. Using fallback...")
+                    log("Primary methods failed. Using fallback...")
                     post_buttons = driver.find_elements(By.TAG_NAME, "button")
                     for btn in post_buttons:
                         if "Post" in btn.text:
                             post_btn = btn
-                            print("Found Post button via fallback mechanism")
+                            log("Found Post button via fallback mechanism")
                             break
                     else:
                         raise Exception("Post button not found")
@@ -53,18 +60,18 @@ def submit_post(driver):
 
         # Try different click methods
         try:
-            print("Attempting JavaScript click...")
+            log("Attempting JavaScript click...")
             driver.execute_script("arguments[0].click();", post_btn)
         except:
             try:
-                print("Attempting ActionChains click...")
+                log("Attempting ActionChains click...")
                 from selenium.webdriver.common.action_chains import ActionChains
                 ActionChains(driver).move_to_element(post_btn).click().perform()
             except:
-                print("Attempting regular click...")
+                log("Attempting regular click...")
                 post_btn.click()
 
-        print("✅ Post submitted.")
+        log("✅ Post submitted.")
         time.sleep(5)
 
         # Verify post was successful
@@ -72,18 +79,28 @@ def submit_post(driver):
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'feed-shared-update-v2')]"))
             )
-            print("✅ Post confirmed on feed.")
+            log("✅ Post confirmed on feed.")
         except:
-            print("⚠️ Post submission attempted, but couldn't verify post on feed.")
+            log("⚠️ Post submission attempted, but couldn't verify post on feed.")
 
     except Exception as e:
-        print(f"❌ Failed to click Post button: {e}")
+        log(f"❌ Failed to click Post button: {e}")
         driver.save_screenshot("post_button_error.png")
         raise
 
-def open_post_modal(driver):
-    driver.get("https://www.linkedin.com/feed/")
+def open_post_modal(driver, log_callback=None):
     try:
+        # Helper function for logging
+        def log(message):
+            # Print to console
+            print(message)
+            # If callback is provided, also send to GUI
+            if log_callback:
+                log_callback(message)
+                
+        driver.get("https://www.linkedin.com/feed/")
+        log("Navigating to LinkedIn feed...")
+        
         # Wait longer for the feed to fully load and stabilize
         time.sleep(5)
         
@@ -93,13 +110,13 @@ def open_post_modal(driver):
         # Try multiple methods with better targeting
         try:
             # Method 1: Target the specific button by ID
-            print("Trying to locate button by ID...")
+            log("Trying to locate 'Start a post' button by ID...")
             # Use the ember ID (but note that these IDs can change between sessions)
             ember_buttons = driver.find_elements(By.CSS_SELECTOR, "[id^='ember'][class*='artdeco-button']")
             
             for btn in ember_buttons:
                 if "Start a post" in btn.text:
-                    print(f"Found button with text: {btn.text}")
+                    log(f"Found button with text: {btn.text}")
                     # Scroll to ensure it's in view
                     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
                     time.sleep(2)
@@ -120,10 +137,10 @@ def open_post_modal(driver):
                 raise Exception("Button with 'Start a post' text not found")
                 
         except Exception as e:
-            print(f"ID method failed: {e}")
+            log(f"ID method failed: {e}")
             try:
                 # Method 2: Try direct XPath with contains for the specific class you shared
-                print("Trying specific class selector...")
+                log("Trying specific class selector...")
                 post_button = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, ".iJgxIKBnhIZuvAnUHEGlRLCUgQuzvthjEUODyac"))
                 )
@@ -134,9 +151,9 @@ def open_post_modal(driver):
                 ActionChains(driver).move_to_element(post_button).click().perform()
                 
             except Exception as e2:
-                print(f"Class selector method failed: {e2}")
+                log(f"Class selector method failed: {e2}")
                 # Method 3: Try clicking any element that has "Start a post" text
-                print("Trying text search...")
+                log("Trying text search...")
                 try:
                     elements = driver.find_elements(By.XPATH, "//*[contains(text(), 'Start a post')]")
                     if elements:
@@ -151,23 +168,33 @@ def open_post_modal(driver):
                     else:
                         raise Exception("No elements with 'Start a post' text found")
                 except Exception as e3:
-                    print(f"Text search failed: {e3}")
+                    log(f"Text search failed: {e3}")
                     raise Exception("Could not open post modal with any method")
 
         # Verify the post modal is open
         WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.XPATH, "//div[contains(@role, 'textbox')]"))
         )
-        print("📝 Opened post modal.")
+        log("📝 Opened post modal.")
         return True
     except Exception as e:
+        if log_callback:
+            log_callback(f"❌ Failed to open post modal: {e}")
         print(f"❌ Failed to open post modal: {e}")
         driver.save_screenshot("debug_post_modal_failure.png")  # Save a screenshot for debugging
         return False
 
-def upload_image(driver, image_path):
+def upload_image(driver, image_path, log_callback=None):
     try:
-        print("Attempting to upload image...")
+        # Helper function for logging
+        def log(message):
+            # Print to console
+            print(message)
+            # If callback is provided, also send to GUI
+            if log_callback:
+                log_callback(message)
+                
+        log("Attempting to upload image...")
         
         # Try multiple selectors to find the image upload button
         selectors = [
@@ -188,7 +215,7 @@ def upload_image(driver, image_path):
         # Try each selector
         for selector in selectors:
             try:
-                print(f"Trying selector: {selector}")
+                log(f"Trying selector: {selector}")
                 image_button = WebDriverWait(driver, 3).until(
                     EC.element_to_be_clickable((By.XPATH, selector))
                 )
@@ -204,14 +231,14 @@ def upload_image(driver, image_path):
                     # If JS click fails, try regular click
                     image_button.click()
                 
-                print("✅ Clicked media upload button")
+                log("✅ Clicked media upload button")
                 break
             except Exception as e:
-                print(f"Selector failed: {str(e)[:100]}...")
+                log(f"Selector failed: {str(e)[:100]}...")
                 continue
         else:
             # If all selectors fail, try a final JavaScript approach
-            print("All selectors failed, using JavaScript traversal...")
+            log("All selectors failed, using JavaScript traversal...")
             driver.execute_script("""
                 // Look for buttons with media-related text or icons
                 var buttons = document.querySelectorAll('button');
@@ -233,7 +260,7 @@ def upload_image(driver, image_path):
         
         # Try multiple ways to find the file input
         try:
-            print("Looking for file input...")
+            log("Looking for file input...")
             
             # Try standard method first
             file_input = WebDriverWait(driver, 5).until(
@@ -242,12 +269,12 @@ def upload_image(driver, image_path):
             
             # Ensure the path is absolute
             abs_path = os.path.abspath(image_path)
-            print(f"Uploading file: {abs_path}")
+            log(f"Uploading file: {abs_path}")
             
             # Upload the file
             file_input.send_keys(abs_path)
             
-            print("🖼️ Image selected.")
+            log("🖼️ Image selected.")
             time.sleep(3)
             
             # Check if there's a "Done" button and click it
@@ -264,21 +291,23 @@ def upload_image(driver, image_path):
                             EC.element_to_be_clickable((By.XPATH, done_selector))
                         )
                         done_button.click()
-                        print("✅ Clicked Done button")
+                        log("✅ Clicked Done button")
                         break
                     except:
                         continue
             except:
-                print("No Done button found or not needed")
+                log("No Done button found or not needed")
                 
-            print("✅ Image uploaded.")
+            log("✅ Image uploaded.")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to upload file: {str(e)}")
+            log(f"❌ Failed to upload file: {str(e)}")
             return False
             
     except Exception as e:
+        if log_callback:
+            log_callback(f"❌ Failed to upload image: {e}")
         print(f"❌ Failed to upload image: {e}")
         driver.save_screenshot("image_upload_error.png")
         return False
@@ -455,9 +484,17 @@ def schedule_post(driver):
         return False
 
 
-def create_post_alternative_route(driver, caption, image_path=None, smart=False):
+def create_post_alternative_route(driver, caption, image_path=None, smart=False, log_callback=None):
     """Alternative method to create post when the modal approach fails"""
     try:
+        # Helper function for logging
+        def log(message):
+            # Print to console
+            print(message)
+            # If callback is provided, also send to GUI
+            if log_callback:
+                log_callback(message)
+        
         # Go directly to the post creation page
         driver.get("https://www.linkedin.com/post/new/")
         time.sleep(5)
@@ -468,25 +505,40 @@ def create_post_alternative_route(driver, caption, image_path=None, smart=False)
                 EC.presence_of_element_located((By.XPATH, "//div[contains(@role, 'textbox')]"))
             )
             if smart:
-                topic, hashtags = detect_topic_and_hashtags(clean_caption)
-                print(f"🧠 Detected Topic: {topic}")
-                print(f"#️⃣ Suggested Hashtags: {' '.join(hashtags)}")
-                
-                user_choice = input("Use suggested hashtags? [y = yes / e = edit / n = none]: ").strip().lower()
-                if user_choice == 'e':
-                    custom = input("Enter your own hashtags (space-separated): ").strip()
-                    hashtags = custom.split()
-                elif user_choice == 'n':
+                try:
+                    topic, hashtags = detect_topic_and_hashtags(caption)
+                    print(f"🧠 Detected Topic: {topic}")
+                    print(f"#️⃣ Suggested Hashtags: {' '.join(hashtags)}")
+                    
+                    user_choice = input("Use suggested hashtags? [y = yes / e = edit / n = none]: ").strip().lower()
+                    if user_choice == 'e':
+                        custom = input("Enter your own hashtags (space-separated): ").strip()
+                        hashtags = custom.split()
+                    elif user_choice == 'n':
+                        hashtags = []
+                except Exception as e:
+                    print(f"⚠️ Smart hashtag detection failed: {e}")
+                    print("Continuing without hashtags.")
                     hashtags = []
             else:
-                hashtags = suggest_hashtags(clean_caption)
+                try:
+                    hashtags = suggest_hashtags(caption)
+                except Exception as e:
+                    print(f"⚠️ Hashtag suggestion failed: {e}")
+                    print("Continuing without hashtags.")
+                    hashtags = []
 
-            full_caption = f"{caption}\n{' '.join(hashtags)}"
+            # Add hashtags if any were generated or provided
+            if hashtags:
+                full_caption = f"{caption}\n{' '.join(hashtags)}"
+            else:
+                full_caption = caption
+                
             text_area.send_keys(full_caption)
-            print(f"📝 Post caption filled:\n{full_caption}")
+            log(f"📝 Post caption filled:\n{full_caption}")
             time.sleep(2)
         except Exception as e:
-            print(f"❌ Failed to fill post caption: {e}")
+            log(f"❌ Failed to fill post caption: {e}")
             return False
 
         # Add image if provided
@@ -502,135 +554,100 @@ def create_post_alternative_route(driver, caption, image_path=None, smart=False)
                         EC.presence_of_element_located((By.XPATH, "//input[@type='file']"))
                     )
                     file_input.send_keys(os.path.abspath(image_path))
-                    print("🖼️ Image selected.")
+                    log("🖼️ Image selected.")
                     time.sleep(3)
                     # Look for a Done button
                     done_buttons = driver.find_elements(By.XPATH, "//button[contains(@aria-label, 'Done') or contains(text(), 'Done')]")
                     if done_buttons:
                         done_buttons[0].click()
-                        print("✅ Image uploaded.")
+                        log("✅ Image uploaded.")
                         time.sleep(2)
             except Exception as e:
-                print(f"❌ Failed to upload image: {e}")
+                log(f"❌ Failed to upload image: {e}")
 
         # Ask user before posting
         confirm = input("🚀 Ready to post? [y/n]: ").strip().lower()
         if confirm != 'y':
-            print("❌ Post canceled.")
+            log("❌ Post canceled.")
             return False
 
         # Submit the post using the new `submit_post` function
         try:
-            submit_post(driver)
+            submit_post(driver, log_callback)
+            log("✅ Post submitted")
             return True
         except Exception as e:
-            print(f"❌ Post submission failed: {e}")
+            log(f"❌ Post submission failed: {e}")
             return False
     except Exception as e:
+        if log_callback:
+            log_callback(f"❌ Alternative posting method failed: {e}")
         print(f"❌ Alternative posting method failed: {e}")
         driver.save_screenshot("alternative_post_failure.png")
         return False
 
-def create_linkedin_post(driver, caption, image_path=None, smart=False):
+def create_linkedin_post(driver, caption, image_path=None, smart=False, log_callback=None):
     try:
-        if not open_post_modal(driver):
-            print("⚠️ Standard posting method failed. Trying alternative route...")
-            return create_post_alternative_route(driver, caption, image_path, smart)
-
-        # Upload image if present
-        if image_path:
-            upload_image(driver, image_path)
-
-        # Wait for caption box
-        text_area = WebDriverWait(driver, 5).until(
-            EC.presence_of_element_located((By.XPATH, "//div[contains(@role, 'textbox')]"))
-        )
-
-        # Remove emojis to avoid ChromeDriver Unicode (BMP) issues
-        import re
-        def remove_emojis(text):
-            emoji_pattern = re.compile("[" 
-                                       u"\U0001F600-\U0001F64F"
-                                       u"\U0001F300-\U0001F5FF"
-                                       u"\U0001F680-\U0001F6FF"
-                                       u"\U0001F700-\U0001F77F"
-                                       u"\U0001F780-\U0001F7FF"
-                                       u"\U0001F800-\U0001F8FF"
-                                       u"\U0001F900-\U0001F9FF"
-                                       u"\U0001FA00-\U0001FA6F"
-                                       u"\U0001FA70-\U0001FAFF"
-                                       u"\U00002702-\U000027B0"
-                                       u"\U000024C2-\U0001F251"
-                                       "]+", flags=re.UNICODE)
-            return emoji_pattern.sub(r'', text)
-
-        clean_caption = remove_emojis(caption)
-        print("Note: Removed emojis from caption to avoid ChromeDriver BMP error")
-
-        hashtags = []
-
-        if smart:
-            from ai.ai_generator import detect_topic, suggest_hashtags
-
-            print("🤖 Using smart topic + hashtag detection...")
-            # Combine text + image for richer context
-            content_context = clean_caption
-            if image_path:
-                from ai.ai_generator import caption_image_with_gemini
-                try:
-                    image_description = caption_image_with_gemini(image_path)
-                    content_context += "\n" + image_description
-                except:
-                    pass
-
-            topic = detect_topic(content_context)
-            print(f"🧠 Detected Topic: {topic}")
-
-            hashtags = suggest_hashtags(topic)
-            print("#️⃣ Suggested Hashtags:")
-            for tag in hashtags:
-                print(f"  - {tag}")
-
-            decision = input("Use suggested hashtags? [y = yes / e = edit / n = none]: ").strip().lower()
-            if decision == "e":
-                custom = input("✏️ Enter your hashtags (space-separated): ").strip()
-                hashtags = custom.split()
-            elif decision == "n":
-                hashtags = []
-
+        # Helper function for logging
+        def log(message):
+            # Print to console
+            print(message)
+            # If callback is provided, also send to GUI
+            if log_callback:
+                log_callback(message)
+        
+        # Clean the caption first
+        def remove_non_bmp(text):
+            return ''.join(char for char in text if ord(char) < 0x10000)
+        
+        clean_caption = remove_non_bmp(caption)
+        
+        # Try the standard posting method first
+        if open_post_modal(driver, log_callback):
+            try:
+                # Wait for the post text area
+                post_text_area = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//div[contains(@role, 'textbox')]"))
+                )
+                
+                # Clear any existing text and enter the caption
+                post_text_area.clear()
+                post_text_area.send_keys(clean_caption)
+                log("✅ Caption entered successfully")
+                
+                # Handle image upload if provided
+                if image_path:
+                    if upload_image(driver, image_path, log_callback):
+                        log("✅ Image uploaded successfully")
+                    else:
+                        log("⚠️ Image upload failed")
+                
+                # Handle smart hashtags if enabled
+                if smart:
+                    try:
+                        topic, hashtags = detect_topic_and_hashtags(clean_caption)
+                        if hashtags:
+                            post_text_area.send_keys("\n\n" + " ".join(hashtags))
+                            log("✅ Smart hashtags added")
+                    except Exception as e:
+                        log(f"⚠️ Smart hashtag detection failed: {e}")
+                        log("Continuing without hashtags.")
+                
+                # Submit the post
+                submit_post(driver, log_callback)
+                log("✅ Post submitted")
+                return True
+                
+            except Exception as e:
+                log(f"❌ Failed to fill post caption: {e}")
+                return False
         else:
-            from ai.ai_generator import suggest_hashtags
-            hashtags = suggest_hashtags(clean_caption)
-
-        full_caption = f"{clean_caption}\n{' '.join(hashtags)}"
-
-        # Fill the post text box
-        text_area.clear()
-        for chunk in [full_caption[i:i+100] for i in range(0, len(full_caption), 100)]:
-            text_area.send_keys(chunk)
-            time.sleep(0.5)
-
-        print("📝 Post caption filled.")
-
-        # Ask user: post now or later
-        post_choice = input("📆 Post now or later? [now/later]: ").strip().lower()
-        if post_choice == "later":
-            from automation.post_creator import schedule_post
-            success = schedule_post(driver)
-            if not success:
-                print("❌ Scheduling failed. Posting now instead.")
-                from automation.post_creator import submit_post
-                submit_post(driver)
-        elif post_choice == "now":
-            from automation.post_creator import submit_post
-            submit_post(driver)
-        else:
-            print("❌ Invalid option. Post not submitted.")
-            return False
-
-        return True
-
+            log("⚠️ Standard posting method failed. Trying alternative route...")
+            return create_post_alternative_route(driver, clean_caption, image_path, smart, log_callback)
+            
     except Exception as e:
-        print(f"❌ Post submission failed: {e}")
+        if log_callback:
+            log_callback(f"❌ Post creation failed: {e}")
+        print(f"❌ Post creation failed: {e}")
         return False
 

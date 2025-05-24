@@ -1,4 +1,3 @@
-# automation/connection_requester.py
 import time
 import random
 from selenium.webdriver.common.by import By
@@ -7,153 +6,166 @@ from selenium.common.exceptions import (
     NoSuchElementException,
     ElementClickInterceptedException,
     StaleElementReferenceException,
+    TimeoutException,
 )
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-
-
-def open_people_you_may_know(driver):
-    print("🔄 Opening LinkedIn network page...")
+def open_people_you_may_know(driver, output_callback=None):
+    """Open the LinkedIn 'My Network' page."""
+    if output_callback:
+        output_callback("🔄 Opening LinkedIn network page...\n", level="info")
     driver.get("https://www.linkedin.com/mynetwork/")
-    time.sleep(6)  # Wait for the page to load completely
-    print("✅ Network page loaded")
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.TAG_NAME, "main"))
+        )
+        time.sleep(3)
+        if output_callback:
+            output_callback("✅ Network page loaded\n", level="user")
+    except TimeoutException:
+        if output_callback:
+            output_callback("⚠️ Page load timeout, continuing...\n", level="info")
 
-
-def get_connection_sections(driver):
-    """Get all connection sections from the network page"""
+def get_connection_sections(driver, output_callback=None):
+    """Get all connection sections (profile cards)."""
     sections = {}
     try:
-        # Find all section headers that are actually section titles, not profile names
-        headers = driver.find_elements(
-            By.XPATH, "//p[contains(@class, '_1s9oaxgp') and contains(@class, '_29kmc3a') and (contains(text(), '#') or contains(text(), 'people') or contains(text(), 'People'))]"
-        )
+        # Updated selectors to target profile cards more reliably
+        section_selectors = [
+            "//div[contains(@class, 'discover-person-card') or contains(@class, 'mn-connection-card') or @data-view-name='profile-card']",
+            "//div[.//button[contains(@aria-label, 'Invite') or contains(text(), 'Connect')]]",
+            "//div[contains(@class, 'artdeco-card') and .//span[contains(@class, 'discover-person-card__name')]]"
+        ]
+        
+        headers = []
+        for selector in section_selectors:
+            try:
+                # Wait for at least one profile card to be visible
+                WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, selector))
+                )
+                headers = driver.find_elements(By.XPATH, selector)
+                if headers and output_callback:
+                    output_callback(f"📋 Found {len(headers)} profile cards\n", level="info")
+                break
+            except TimeoutException:
+                if output_callback:
+                    output_callback(f"⚠️ No profile cards found with selector: {selector}\n", level="debug")
+                continue
+        
+        if not headers and output_callback:
+            output_callback("⚠️ No profile cards found across all selectors\n", level="user")
+            return sections
         
         for header in headers:
-            section_title = header.text.strip()
-            if (
-                not section_title
-                or "Manage" in section_title
-                or "Training" in section_title
-                or "invited" in section_title
-                or "Grow your career" in section_title
-            ):
-                continue  # Skip irrelevant or empty titles
-                
-            # Get the parent section container
             try:
-                # First try to find the closest container that holds multiple profiles
-                section = header.find_element(
-                    By.XPATH, "./ancestor::div[contains(@class, '_1xoe5hdi')]"
-                )
-                sections[section_title] = section
-                print(f"📋 Found section: {section_title}")
-            except NoSuchElementException:
-                print(f"⚠️ Could not find container for section: {section_title}")
-                
-        # If no sections found, use the default container
-        if not sections:
-            try:
-                default_container = driver.find_element(
-                    By.XPATH, "//div[contains(@class, 'mn-discover-cohort')]"
-                )
-                sections["People you may know"] = default_container
-                print("📋 Using default people you may know section")
-            except NoSuchElementException:
-                print("⚠️ Could not find default connection section")
+                # Extract a unique identifier for the card (e.g., name or title)
+                name_element = header.find_element(By.XPATH, ".//span[contains(@class, 'discover-person-card__name') or contains(@aria-label, 'View')]")
+                section_title = name_element.text.strip()[:50] + "..." if len(name_element.text.strip()) > 50 else name_element.text.strip()
+                if not section_title or "Manage" in section_title or "Training" in section_title or "invited" in section_title:
+                    continue
+                sections[section_title] = header
+            except Exception as e:
+                if output_callback:
+                    output_callback(f"⚠️ Error processing card: {str(e)}\n", level="debug")
                 
     except Exception as e:
-        print(f"⚠️ Error finding connection sections: {str(e)}")
+        if output_callback:
+            output_callback(f"❌ Error finding cards: {str(e)}\n", level="debug")
         
     return sections
 
-
-def extract_profile_cards(section_element, driver):
-    """Extract profile cards from a specific section"""
+def extract_profile_cards(section_element, driver, output_callback=None):
+    """Treat section element as a profile card."""
     try:
         if section_element:
-            # Extract cards within the specific section
-            # Look for elements that contain profile information but are not section headers
-            cards = section_element.find_elements(
-                By.XPATH, ".//div[contains(@class, 'discover-entity-card') or contains(@class, 'discover-person-card') or contains(@data-view-name, 'cohort-card')]"
-            )
-            
-            # Filter out cards that don't have a connect button
-            valid_cards = []
-            for card in cards:
-                try:
-                    # Check if this card has a connect button
-                    connect_button = card.find_element(
-                        By.XPATH, ".//button[contains(@aria-label, 'Invite') and contains(@aria-label, 'to connect')]"
-                    )
-                    valid_cards.append(card)
-                except NoSuchElementException:
-                    # No connect button, might not be a profile card
-                    continue
-                    
-            return valid_cards
+            connect_button = get_connect_button(section_element)
+            if connect_button:
+                if output_callback:
+                    output_callback("🔍 Found 1 profile card\n", level="info")
+                return [section_element]
+            else:
+                if output_callback:
+                    output_callback("⚠️ No connect button found for card\n", level="info")
+                return []
     except Exception as e:
-        print(f"⚠️ Error extracting profile cards: {str(e)}")
-        
+        if output_callback:
+            output_callback(f"❌ Error extracting card: {str(e)}\n", level="debug")
     return []
 
-
 def extract_profile_info(card):
+    """Extract profile information from a card."""
     try:
         name = headline = location = university = company = "N/A"
         
-        # Find name - two common patterns
-        try:
-            name_element = card.find_element(
-                By.XPATH, ".//p[contains(@class, '_1s9oaxgp') and contains(@class, '_29kmc3a')]"
-            )
-            name = name_element.text.strip()
-        except NoSuchElementException:
+        name_selectors = [
+            ".//span[contains(@class, 'discover-person-card__name')]",
+            ".//p[contains(@class, '_08b3c87c') and contains(@class, '_60273cc6')]",
+            ".//span[contains(@aria-label, 'View') and contains(@aria-label, 'profile')]"
+        ]
+        
+        for selector in name_selectors:
             try:
-                # Alternative name pattern
-                name_element = card.find_element(
-                    By.XPATH, ".//span[contains(@class, 'discover-person-card__name') or contains(@class, 'name')]"
-                )
+                name_element = card.find_element(By.XPATH, selector)
                 name = name_element.text.strip()
+                if name and name != "N/A":
+                    break
             except:
-                pass
+                continue
         
-        # Find headline
-        try:
-            headline_element = card.find_element(
-                By.XPATH, ".//p[contains(@class, '_1s9oaxgp') and contains(@class, '_29kmc36')]"
-            )
-            headline = headline_element.text.strip()
-        except NoSuchElementException:
+        headline_selectors = [
+            ".//p[contains(@class, 'discover-person-card__occupation')]",
+            ".//p[contains(@class, '_08b3c87c') and contains(@class, '_474cacb5')]",
+            ".//div[contains(@class, 'artdeco-entity-lockup__content')]//p[2]"
+        ]
+        
+        for selector in headline_selectors:
             try:
-                # Alternative headline pattern
-                headline_element = card.find_element(
-                    By.XPATH, ".//span[contains(@class, 'discover-person-card__occupation') or contains(@class, 'headline')]"
-                )
+                headline_element = card.find_element(By.XPATH, selector)
                 headline = headline_element.text.strip()
+                if headline:
+                    break
             except:
-                pass
+                continue
         
-        # Find university info
         try:
-            university_element = card.find_element(
-                By.XPATH, ".//*[contains(text(), 'Attended') or contains(text(), 'Studied at')]"
+            location_element = card.find_element(
+                By.XPATH, ".//*[contains(text(), ', ') and not(contains(text(), 'Works at')) and not(contains(text(), 'Attended'))]"
             )
-            university = university_element.text.split("Attended ")[-1].split("Studied at ")[-1].strip()
+            location_text = location_element.text.strip()
+            if ", " in location_text:
+                location = location_text.split(", ")[-1].strip()
         except:
             pass
         
-        # Find company info
+        try:
+            university_element = card.find_element(
+                By.XPATH, ".//*[contains(text(), 'Attended') or contains(text(), 'Studied at') or contains(text(), 'University') or contains(text(), 'College')]"
+            )
+            university_text = university_element.text
+            if "Attended " in university_text:
+                university = university_text.split("Attended ")[-1].strip()
+            elif "Studied at " in university_text:
+                university = university_text.split("Studied at ")[-1].strip()
+            else:
+                university = university_text.strip()
+        except:
+            pass
+        
         try:
             company_element = card.find_element(
-                By.XPATH, ".//*[contains(text(), 'Works at') or contains(text(), 'at')]"
+                By.XPATH, ".//*[contains(text(), 'Works at') or contains(text(), ' at ')]"
             )
-            company = company_element.text.split("Works at ")[-1].split("at ")[-1].strip()
-            
-            # Clean up company name if it contains additional info
+            company_text = company_element.text
+            if "Works at " in company_text:
+                company = company_text.split("Works at ")[-1].strip()
+            elif " at " in company_text and "Attended" not in company_text:
+                company = company_text.split(" at ")[-1].strip()
+            else:
+                company = company_text.strip()
             if "," in company:
                 company = company.split(",")[0].strip()
-                
         except:
             pass
         
@@ -166,142 +178,189 @@ def extract_profile_info(card):
             "company": company,
         }
     except Exception as e:
-        print(f"⚠️ Error extracting profile info: {str(e)}")
         return {
             "name": "Unknown",
-            "headline": "N/A",
+            "headline": "N/A", 
             "location": "N/A",
             "connections": "N/A",
             "university": "N/A",
             "company": "N/A",
         }
 
-
 def get_connect_button(card):
-    try:
-        return card.find_element(
-            By.XPATH, ".//button[contains(@aria-label, 'Invite') and contains(@aria-label, 'to connect')]"
-        )
-    except NoSuchElementException:
-        return None
+    """Find the connect button in a profile card."""
+    connect_selectors = [
+        ".//button[contains(@aria-label, 'Invite') and contains(@aria-label, 'to connect')]",
+        ".//button[@data-view-name='edge-creation-connect-action']",
+        ".//button[contains(text(), 'Connect') and contains(@class, 'artdeco-button')]"
+    ]
+    
+    retries = 2
+    while retries > 0:
+        for selector in connect_selectors:
+            try:
+                button = card.find_element(By.XPATH, selector)
+                return button
+            except NoSuchElementException:
+                continue
+        retries -= 1
+        time.sleep(1)
+    return None
 
-
-def send_connection_request(driver, card, button, message):
-    """Send a connection request without adding a note (since that requires Premium)"""
+def send_connection_request(driver, card, button, message, output_callback=None):
+    """Send a connection request."""
     try:
-        # Highlight the card to make it visible to the user
         driver.execute_script(
             "arguments[0].style.border='2px solid green'; arguments[0].style.backgroundColor='#f0fff0';", card
         )
-        # Scroll the card into view with margin at the top for better visibility
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
         time.sleep(1)
         
-        # Click the connect button
-        button.click()
-        time.sleep(2)
+        ActionChains(driver).move_to_element(button).click().perform()
+        time.sleep(5)
         
-        # Check if the request was sent by looking for the "Pending" or "Sent" button
+        success = False
         try:
-            # Look for either the "Pending" button or the "Sent" button
-            pending_btn = driver.find_element(By.XPATH, "//button[contains(@aria-label, 'Pending')]")
-            print("✅ Connection request sent successfully (Pending).")
-            return True
-        except NoSuchElementException:
-            try:
-                sent_btn = driver.find_element(By.XPATH, "//button[contains(@aria-label, 'Sent')]")
-                print("✅ Connection request sent successfully (Sent).")
-                return True
-            except NoSuchElementException:
-                # If we don't find either button, try to click "Send now"
+            send_buttons = [
+                "//button[contains(text(), 'Send invitation')]",
+                "//button[contains(text(), 'Send now')]", 
+                "//button[@aria-label='Send invitation']",
+                "//button[@aria-label='Send now']"
+            ]
+            for btn_selector in send_buttons:
                 try:
-                    send_btn = driver.find_element(By.XPATH, "//button[@aria-label='Send now']")
+                    send_btn = WebDriverWait(driver, 3).until(
+                        EC.element_to_be_clickable((By.XPATH, btn_selector))
+                    )
                     send_btn.click()
                     time.sleep(2)
-                    print("✅ Connection request sent successfully.")
-                    return True
-                except NoSuchElementException:
-                    # If we can't find the "Send now" button, the request might have been sent automatically
-                    print("✅ Connection request sent successfully.")
-                    return True
-                    
-        # Change the highlight to indicate success
-        driver.execute_script(
-            "arguments[0].style.border='2px solid blue'; arguments[0].style.backgroundColor='#e6f7ff';", card
-        )
+                    success = True
+                    if output_callback:
+                        output_callback("✅ Connection request sent via modal\n", level="user")
+                    break
+                except TimeoutException:
+                    continue
+        except:
+            pass
+        
+        if not success:
+            try:
+                status_selectors = [
+                    "//button[contains(@aria-label, 'Pending')]",
+                    "//button[contains(@aria-label, 'Sent')]",
+                    "//button[contains(text(), 'Pending')]"
+                ]
+                for status_selector in status_selectors:
+                    try:
+                        WebDriverWait(driver, 3).until(
+                            EC.presence_of_element_located((By.XPATH, status_selector))
+                        )
+                        success = True
+                        if output_callback:
+                            output_callback("✅ Connection request sent successfully\n", level="user")
+                        break
+                    except TimeoutException:
+                        continue
+            except:
+                pass
+        
+        if not success:
+            success = True
+            if output_callback:
+                output_callback("✅ Connection request likely sent\n", level="user")
+            
+        if success:
+            driver.execute_script(
+                "arguments[0].style.border='2px solid blue'; arguments[0].style.backgroundColor='#e6f7ff';", card
+            )
+        return success
             
     except ElementClickInterceptedException:
-        print("❌ Could not click connect. Possibly already sent.")
+        if output_callback:
+            output_callback("❌ Could not click connect button\n", level="user")
         driver.execute_script(
             "arguments[0].style.border='2px solid red'; arguments[0].style.backgroundColor='#fff1f0';", card
         )
         return False
     except Exception as e:
-        print(f"❌ Error: {str(e)}")
+        if output_callback:
+            output_callback(f"❌ Error sending connection: {str(e)}\n", level="user")
         return False
 
-
-def scroll_to_load_more(driver, times=10):
-    """Scroll the page to load more connections"""
-    print("📜 Scrolling the page to load more connections...")
+def scroll_to_load_more(driver, times=10, output_callback=None):
+    """Scroll the page to load more connections."""
+    if output_callback:
+        output_callback("📜 Scrolling to load more profiles...\n", level="info")
+    last_height = driver.execute_script("return document.body.scrollHeight")
     for i in range(times):
-        # Scroll down incrementally to trigger dynamic loading
-        driver.execute_script(
-            "window.scrollBy(0, Math.min(window.innerHeight, document.body.scrollHeight - window.scrollY));"
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(random.uniform(4, 6))
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            if output_callback:
+                output_callback("✅ No more profiles to load\n", level="info")
+            break
+        last_height = new_height
+    # Wait for profiles to be visible after scrolling
+    try:
+        WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((
+                By.XPATH,
+                "//div[contains(@class, 'discover-person-card') or contains(@class, 'mn-connection-card') or @data-view-name='profile-card']"
+            ))
         )
-        print(f"  Scroll {i + 1}/{times}...")
-        time.sleep(random.uniform(2, 4))  # Random delay between scrolls
-    print("✅ Done scrolling")
+        if output_callback:
+            output_callback("✅ Profiles loaded after scrolling\n", level="info")
+    except TimeoutException:
+        if output_callback:
+            output_callback("⚠️ No profiles visible after scrolling\n", level="info")
+    if output_callback:
+        output_callback("✅ Done scrolling\n", level="info")
 
-# Global sets to track different profile states
-processed_profiles = set()     # Profiles you've already sent requests to
-skipped_profiles = set()       # Profiles you skipped
-saved_for_later = set()        # Profiles you marked to review later
+processed_profiles = set()
+skipped_profiles = set()
+saved_for_later = set()
 
-
-def print_profile_info(profile_info):
-    """Print profile information in a nicely formatted way"""
-    print("\n" + "=" * 50)
-    print(f"👤 {profile_info['name']}")
-    print(f"💼 {profile_info['headline']}")
+def print_profile_info(profile_info, output_callback=None):
+    """Display profile information."""
+    output = "\n" + "=" * 50 + "\n"
+    output += f"👤 {profile_info['name']}\n"
+    output += f"💼 {profile_info['headline']}\n"
     if profile_info['location'] != "N/A":
-        print(f"📍 {profile_info['location']}")
-    if profile_info['connections'] != "N/A":
-        print(f"🔗 {profile_info['connections']}")
+        output += f"📍 {profile_info['location']}\n"
     if profile_info['university'] != "N/A":
-        print(f"🎓 {profile_info['university']}")
+        output += f"🎓 {profile_info['university']}\n"
     if profile_info['company'] != "N/A":
-        print(f"🏢 {profile_info['company']}")
-    print("=" * 50)
+        output += f"🏢 {profile_info['company']}\n"
+    output += "=" * 50 + "\n"
+    if output_callback:
+        output_callback(output, level="user")
 
-
-def process_connections(driver, max_requests=5):
-    """Process connection requests with enhanced user feedback"""
+def process_connections(driver, max_requests=5, output_callback=None, decision_callback=None, counter_callback=None):
+    """Process connection requests."""
     global processed_profiles, skipped_profiles, saved_for_later
-    open_people_you_may_know(driver)
-    scroll_to_load_more(driver)
+    
+    open_people_you_may_know(driver, output_callback)
+    scroll_to_load_more(driver, output_callback=output_callback)
 
-    # Get all connection sections
-    sections = get_connection_sections(driver)
+    sections = get_connection_sections(driver, output_callback)
     if not sections:
-        print("❌ No connection sections found. Trying to find profiles directly...")
-        # Fallback to processing all cards on the page without sections
-        process_all_profiles(driver, max_requests)
+        if output_callback:
+            output_callback("❌ No profiles found. Trying direct profile search...\n", level="user")
+        process_all_profiles(driver, max_requests, output_callback, decision_callback, counter_callback)
         return
 
     total_requests_sent = 0
-    processed_in_this_run = set()  # Track profiles processed in this run
+    processed_in_this_run = set()
 
     for section_title, section_element in sections.items():
         if total_requests_sent >= max_requests:
             break
 
-        print(f"\n🔶 Processing section: {section_title} 🔶")
+        if output_callback:
+            output_callback(f"\n🔶 Processing profile: {section_title[:30]}...\n", level="user")
 
-        # Extract all cards in this section
-        cards = extract_profile_cards(section_element, driver)
-        print(f"🔍 Found {len(cards)} potential connections in this section.")
-
+        cards = extract_profile_cards(section_element, driver, output_callback)
         if not cards:
             continue
 
@@ -309,179 +368,211 @@ def process_connections(driver, max_requests=5):
             if total_requests_sent >= max_requests:
                 break
 
-            try:
-                # Extract profile information
-                profile_info = extract_profile_info(card)
-                name = profile_info['name']
+            retries = 2
+            while retries > 0:
+                try:
+                    profile_info = extract_profile_info(card)
+                    name = profile_info['name']
 
-                # Skip invalid or already processed profiles
-                if name == "N/A" or name == "Unknown":
-                    continue
+                    if name == "N/A" or name == "Unknown" or not name.strip():
+                        if output_callback:
+                            output_callback(f"⚠️ Skipping invalid profile: {name}\n", level="user")
+                        break
                 
-                # Skip if processed in this run or in previous runs
-                if name in processed_in_this_run or name in processed_profiles:
+                    if name in processed_in_this_run or name in processed_profiles:
+                        if output_callback:
+                            output_callback(f"⚠️ Skipping already processed: {name}\n", level="user")
+                        break
+
+                    processed_in_this_run.add(name)
+                    driver.execute_script(
+                        "arguments[0].style.border='2px solid green';", card
+                    )
+                    print_profile_info(profile_info, output_callback)
+
+                    while True:
+                        if output_callback:
+                            output_callback("🤖 Send request? [y/n/l]: ", level="user")
+                        decision = decision_callback()
+                        if decision == "y":
+                            connect_button = get_connect_button(card)
+                            if connect_button:
+                                success = send_connection_request(driver, card, connect_button, None, output_callback)
+                                if success:
+                                    total_requests_sent += 1
+                                    processed_profiles.add(name)
+                                    if output_callback:
+                                        output_callback(f"📊 Progress: {total_requests_sent}/{max_requests} requests sent\n", level="user")
+                                    if counter_callback:
+                                        global connections_sent
+                                        connections_sent = total_requests_sent
+                                        counter_callback()
+                            else:
+                                if output_callback:
+                                    output_callback("❌ No connect button found\n", level="user")
+                            break
+                        elif decision == "n":
+                            skipped_profiles.add(name)
+                            if output_callback:
+                                output_callback("⏭️ Skipped\n", level="user")
+                            driver.execute_script(
+                                "arguments[0].style.border='2px solid gray';", card
+                            )
+                            if counter_callback:
+                                global connections_skipped
+                                connections_skipped += 1
+                                counter_callback()
+                            break
+                        elif decision == "l":
+                            saved_for_later.add(name)
+                            if output_callback:
+                                output_callback("📌 Saved for later\n", level="user")
+                            if counter_callback:
+                                global connections_saved
+                                connections_saved += 1
+                                counter_callback()
+                            break
+                        else:
+                            if output_callback:
+                                output_callback("⚠️ Invalid option. Choose [y/n/l]\n", level="user")
+
+                    time.sleep(random.uniform(1, 2))
+                    break
+
+                except StaleElementReferenceException:
+                    if output_callback:
+                        output_callback("⚠️ Stale element, retrying...\n", level="info")
+                    retries -= 1
+                    time.sleep(1)
                     continue
+                except Exception as e:
+                    if output_callback:
+                        output_callback(f"❌ Error processing profile: {str(e)}\n", level="user")
+                    break
+            if retries == 0:
+                if output_callback:
+                    output_callback("❌ Failed to process profile after retries\n", level="user")
+                continue
 
-                # Add to processed set for this run
-                processed_in_this_run.add(name)
-
-                # Highlight the card
-                driver.execute_script(
-                    "arguments[0].style.border='2px solid green';", card
-                )
-
-                # Print profile details
-                print_profile_info(profile_info)
-
-                while True:
-                    decision = input("🤖 Send request? [y = yes / n = skip / l = save for later]: ").strip().lower()
-
-                    if decision == "y":
-                        connect_button = get_connect_button(card)
-                        if connect_button:
-                            success = send_connection_request(driver, card, connect_button, None)
-                            if success:
-                                total_requests_sent += 1
-                                processed_profiles.add(name)
-                                print(f"📊 Progress: {total_requests_sent}/{max_requests} requests sent")
-                        break
-
-                    elif decision == "n":
-                        skipped_profiles.add(name)
-                        print("⏭️ Skipped.")
-                        break
-
-                    elif decision == "l":
-                        saved_for_later.add(name)
-                        print("📌 Saved for later.")
-                        break
-
-                    else:
-                        print("⚠️ Invalid option. Choose [y/n/l]")
-
-                time.sleep(1)
-
-            except StaleElementReferenceException:
-                print("⚠️ Element became stale. Moving to next.")
-            except Exception as e:
-                print(f"⚠️ Error processing card: {str(e)}")
-
-    print(f"\n✅ Connection process completed. Sent {total_requests_sent} connection requests.")
-
-
-def process_all_profiles(driver, max_requests=5):
-    """Process all profiles on the page without relying on sections"""
-    global processed_profiles
+def process_all_profiles(driver, max_requests, output_callback, decision_callback, counter_callback):
+    """Process all profiles on the page without relying on sections."""
+    global processed_profiles, connections_sent, connections_skipped, connections_saved
     total_requests_sent = 0
-    processed_in_this_run = set()  # Track profiles processed in this run
+    processed_in_this_run = set()
     
-    # Find all cards that have a connect button
     try:
-        # This is a more direct approach to find profile cards
-        cards = driver.find_elements(
-            By.XPATH, "//div[.//button[contains(@aria-label, 'Invite') and contains(@aria-label, 'to connect')]]"
-        )
-        print(f"🔍 Found {len(cards)} potential connections on the page.")
+        card_selectors = [
+            "//div[contains(@class, 'discover-person-card') or contains(@class, 'mn-connection-card') or @data-view-name='profile-card']",
+            "//div[.//button[contains(@aria-label, 'Invite') or contains(text(), 'Connect')]]",
+            "//div[contains(@class, 'artdeco-card') and .//span[contains(@class, 'discover-person-card__name')]]"
+        ]
+        
+        cards = []
+        for selector in card_selectors:
+            try:
+                WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, selector))
+                )
+                cards = driver.find_elements(By.XPATH, selector)
+                if cards and output_callback:
+                    output_callback(f"🔍 Found {len(cards)} profiles\n", level="info")
+                break
+            except TimeoutException:
+                if output_callback:
+                    output_callback(f"⚠️ No profiles found with selector: {selector}\n", level="debug")
+                continue
+        
+        if not cards and output_callback:
+            output_callback("❌ No profiles found across all selectors\n", level="user")
+            return
         
         for card in cards:
             if total_requests_sent >= max_requests:
                 break
                 
-            try:
-                # Extract profile information
-                profile_info = extract_profile_info(card)
-                name = profile_info['name']
+            retries = 2
+            while retries > 0:
+                try:
+                    profile_info = extract_profile_info(card)
+                    name = profile_info['name']
 
-                # Skip invalid or already processed profiles
-                if name == "N/A" or name == "Unknown":
-                    continue
+                    if name == "N/A" or name == "Unknown" or not name.strip():
+                        if output_callback:
+                            output_callback(f"⚠️ Skipping invalid profile: {name}\n", level="user")
+                        break
                 
-                # Skip if processed in this run or in previous runs
-                if name in processed_in_this_run or name in processed_profiles:
-                    continue
+                    if name in processed_in_this_run or name in processed_profiles:
+                        if output_callback:
+                            output_callback(f"⚠️ Skipping already processed: {name}\n", level="user")
+                        break
 
-                # Add to processed set for this run
-                processed_in_this_run.add(name)
-
-                # Highlight the card
-                driver.execute_script(
-                    "arguments[0].style.border='2px solid green';", card
-                )
-
-                # Print profile details
-                print_profile_info(profile_info)
-
-                # Generate a personalized note
-                note = generate_connection_note(
-                    profile_info['name'],
-                    profile_info['headline'],
-                    university=profile_info['university'] if profile_info['university'] != "N/A" else None,
-                    company=profile_info['company'] if profile_info['company'] != "N/A" else None
-                )
-                print(f"💬 Suggested Message:\n{note}")
-
-                # Ask for user confirmation
-                decision = input("🤖 Send this request? [y/n]: ").strip().lower()
-                if decision == "y":
-                    connect_button = get_connect_button(card)
-                    if connect_button:
-                        success = send_connection_request(driver, card, connect_button, note)
-                        if success:
-                            total_requests_sent += 1
-                            processed_profiles.add(name)  # Mark profile as processed
-                            print(f"📊 Progress: {total_requests_sent}/{max_requests} requests sent")
-                    else:
-                        print("❌ Connect button not found for this profile.")
-                else:
-                    print("⏭️ Skipped.")
+                    processed_in_this_run.add(name)
                     driver.execute_script(
-                        "arguments[0].style.border='2px solid gray';", card
+                        "arguments[0].style.border='2px solid green';", card
                     )
+                    print_profile_info(profile_info, output_callback)
 
-                time.sleep(1)
-                
-            except StaleElementReferenceException:
-                print("⚠️ Element became stale. Moving to next.")
-            except Exception as e:
-                print(f"⚠️ Error processing card: {str(e)}")
-                
-    except Exception as e:
-        print(f"❌ Error finding connection cards: {str(e)}")
-        
-    print(f"\n✅ Connection process completed. Sent {total_requests_sent} connection requests.")
+                    while True:
+                        if output_callback:
+                            output_callback("🤖 Send request? [y/n/l]: ", level="user")
+                        decision = decision_callback()
+                        if decision == "y":
+                            connect_button = get_connect_button(card)
+                            if connect_button:
+                                success = send_connection_request(driver, card, connect_button, None, output_callback)
+                                if success:
+                                    total_requests_sent += 1
+                                    processed_profiles.add(name)
+                                    if output_callback:
+                                        output_callback(f"📊 Progress: {total_requests_sent}/{max_requests} requests sent\n", level="user")
+                                    if counter_callback:
+                                        connections_sent = total_requests_sent
+                                        counter_callback()
+                            else:
+                                if output_callback:
+                                    output_callback("❌ No connect button found\n", level="user")
+                            break
+                        elif decision == "n":
+                            skipped_profiles.add(name)
+                            if output_callback:
+                                output_callback("⏭️ Skipped\n", level="user")
+                            driver.execute_script(
+                                "arguments[0].style.border='2px solid gray';", card
+                            )
+                            if counter_callback:
+                                connections_skipped += 1
+                                counter_callback()
+                            break
+                        elif decision == "l":
+                            saved_for_later.add(name)
+                            if output_callback:
+                                output_callback("📌 Saved for later\n", level="user")
+                            if counter_callback:
+                                connections_saved += 1
+                                counter_callback()
+                            break
+                        else:
+                            if output_callback:
+                                output_callback("⚠️ Invalid option. Choose [y/n/l]\n", level="user")
 
-
-def debug_section_detection(driver):
-    """Debug function to help identify proper section elements"""
-    print("🔍 Debugging section detection...")
-    try:
-        # Find all potential section headers
-        headers = driver.find_elements(By.XPATH, "//p[contains(@class, '_1s9oaxgp')]")
-        print(f"Found {len(headers)} potential section headers")
-        
-        for i, header in enumerate(headers):
-            try:
-                text = header.text.strip()
-                if text:
-                    # Highlight header
-                    driver.execute_script(
-                        f"arguments[0].style.border='2px solid blue'; arguments[0].style.backgroundColor='#e6f7ff'; arguments[0].setAttribute('data-debug', 'Header {i}: {text}');", 
-                        header
-                    )
-                    print(f"Header {i}: '{text}'")
+                    time.sleep(random.uniform(1, 2))
+                    break
                     
-                    # Try to find parent container
-                    try:
-                        parent = header.find_element(By.XPATH, "./ancestor::div[contains(@class, '_1xoe5hdi')]")
-                        driver.execute_script(
-                            f"arguments[0].style.border='2px solid green'; arguments[0].setAttribute('data-debug', 'Container for: {text}');",
-                            parent
-                        )
-                    except:
-                        print(f"  No container found for '{text}'")
-            except:
-                pass
+                except StaleElementReferenceException:
+                    if output_callback:
+                        output_callback("⚠️ Stale element, retrying...\n", level="info")
+                    retries -= 1
+                    time.sleep(1)
+                    continue
+                except Exception as e:
+                    if output_callback:
+                        output_callback(f"❌ Error processing profile: {str(e)}\n", level="user")
+                    break
+            if retries == 0:
+                if output_callback:
+                    output_callback("❌ Failed to process profile after retries\n", level="user")
+                continue
                 
-        print("✅ Debug highlighting complete")
     except Exception as e:
-        print(f"❌ Debug error: {str(e)}")
+        if output_callback:
+            output_callback(f"❌ Error finding profiles: {str(e)}\n", level="user")
