@@ -12,7 +12,11 @@ import tkinter as tk
 def main():
     root = tk.Tk()
     app = LinkedInAutomatorGUI(root)
+    
+    # Set up window closing protocol
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
+    
+    # Start the main event loop
     root.mainloop()
 
 if __name__ == "__main__":
